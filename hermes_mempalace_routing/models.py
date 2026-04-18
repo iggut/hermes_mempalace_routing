@@ -147,12 +147,69 @@ class ConflictRecord:
     room: str
     candidate_memory_ids: list[str]
     resolved_memory_id: str | None = None
+    loser_memory_ids: list[str] = field(default_factory=list)
     resolution_reason: str | None = None
     status: str = ConflictStatus.UNRESOLVED.value
     resolution_actor: str | None = None
+    resolved_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class DoctorReport:
+    """Structured output for `hermes-mp doctor`."""
+
+    ok: bool
+    backend: str
+    db_path: str | None = None
+    schema_versions_expected: list[str] = field(default_factory=list)
+    schema_versions_applied: list[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    hints: list[str] = field(default_factory=list)
+
+    def summary_lines(self) -> list[str]:
+        lines = [f"backend={self.backend}", f"ok={self.ok}"]
+        if self.db_path:
+            lines.append(f"db_path={self.db_path}")
+        if self.issues:
+            lines.append("issues:")
+            lines.extend(f"  - {i}" for i in self.issues)
+        if self.warnings:
+            lines.append("warnings:")
+            lines.extend(f"  - {w}" for w in self.warnings)
+        if self.hints:
+            lines.append("hints:")
+            lines.extend(f"  - {h}" for h in self.hints)
+        return lines
+
+
+@dataclass(slots=True)
+class StorageStats:
+    backend: str
+    envelopes: int = 0
+    artifacts: int = 0
+    conflicts: int = 0
+    unresolved_conflicts: int = 0
+    resolved_conflicts: int = 0
+    pinned_envelopes: int = 0
+    rooms: dict[str, int] = field(default_factory=dict)
+    fact_types: dict[str, int] = field(default_factory=dict)
+    redaction: dict[str, int] = field(default_factory=dict)
+    db_path: str | None = None
+
+
+@dataclass(slots=True)
+class ReindexResult:
+    dry_run: bool
+    backend: str
+    envelopes_inserted: int = 0
+    artifacts_touched: int = 0
+    skipped: int = 0
+    errors: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

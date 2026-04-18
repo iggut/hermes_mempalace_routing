@@ -18,6 +18,7 @@ _DIAGNOSTIC_FACTS = frozenset({"stacktrace", "shell_output", "tool_output"})
 EXCLUSION_BELOW_SCORE_THRESHOLD = "below_score_threshold"
 EXCLUSION_DROPPED_FOR_BUDGET = "dropped_for_budget"
 EXCLUSION_CONFLICT_UNRESOLVED = "conflict_unresolved"
+EXCLUSION_CONFLICT_LOSER = "conflict_loser_excluded"
 EXCLUSION_MISSING_PROVENANCE = "missing_provenance"
 EXCLUSION_REDACTION_BLOCKED = "redaction_blocked"
 EXCLUSION_ARTIFACT_UNAVAILABLE = "artifact_unavailable"
@@ -71,6 +72,8 @@ class RoutingContextEngine:
         for c in scored:
             if "missing_provenance" in c.rationale:
                 dropped[c.memory_id] = EXCLUSION_MISSING_PROVENANCE
+            elif "conflict_loser_excluded" in c.rationale:
+                dropped[c.memory_id] = EXCLUSION_CONFLICT_LOSER
             elif c.score < thr:
                 if "unresolved_conflict_penalty" in c.rationale:
                     dropped[c.memory_id] = EXCLUSION_CONFLICT_UNRESOLVED

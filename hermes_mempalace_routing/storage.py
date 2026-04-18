@@ -9,11 +9,24 @@ from pathlib import Path
 import tempfile
 
 from .config import RoutingConfig
-from .models import ConflictRecord, MemoryEnvelope, RawArtifact, RouteRun
+from .migrations import MIGRATIONS
+from .models import (
+    ConflictRecord,
+    DoctorReport,
+    MemoryEnvelope,
+    RawArtifact,
+    ReindexResult,
+    RouteRun,
+    StorageStats,
+)
 
 
 class StorageError(Exception):
     """Base class for storage failures."""
+
+
+class UnsupportedStorageOperation(StorageError):
+    """Backend does not support this operation (e.g. JSONL legacy)."""
 
 
 class StorageWriteError(StorageError):
@@ -45,6 +58,10 @@ class StorageBackend(Protocol):
         route_tags: list[str] | None,
         conflict_key: str | None,
         pinned: bool,
+        *,
+        classification_source: str = "rule",
+        verification_status: str = "unverified",
+        raw_redaction_status: str = "none",
     ) -> MemoryEnvelope: ...
 
     def persist_raw_artifact(self, turn_id: str, kind: str, text: str) -> RawArtifact: ...
@@ -66,6 +83,19 @@ class StorageBackend(Protocol):
     def get_artifact(self, artifact_id: str) -> RawArtifact | None: ...
 
     def read_artifact_text(self, artifact_id: str) -> str | None: ...
+
+    def doctor(self) -> DoctorReport: ...
+
+    def migrate_schema(self) -> tuple[list[str], list[str]]:
+        """Return (expected_migration_versions, applied_versions)."""
+
+    def stats(self) -> StorageStats: ...
+
+    def reindex_from_raw(self, *, dry_run: bool = True) -> ReindexResult: ...
+
+    def set_memory_pinned(self, memory_id: str, pinned: bool, reason: str) -> None: ...
+
+    def find_memory_by_artifact_sha256(self, sha256: str) -> MemoryEnvelope | None: ...
 
 
 def create_storage(config: RoutingConfig) -> StorageBackend:
@@ -136,6 +166,7 @@ class JsonlStorage:
             path=str(path),
             size_bytes=len(text.encode("utf-8")),
             sha256=sha256,
+            redaction_status="none",
         )
         try:
             self._append_jsonl(self.artifacts_jsonl, raw.to_dict())
@@ -157,6 +188,10 @@ class JsonlStorage:
         route_tags: list[str] | None,
         conflict_key: str | None,
         pinned: bool,
+        *,
+        classification_source: str = "rule",
+        verification_status: str = "unverified",
+        raw_redaction_status: str = "none",
     ) -> MemoryEnvelope:
         route_tags = route_tags or []
         raw = self.persist_raw_artifact(turn_id=turn_id, kind=fact_type, text=raw_text)
@@ -174,6 +209,8 @@ class JsonlStorage:
             conflict_key=conflict_key,
             created_at=now,
             updated_at=now,
+            classification_source=classification_source,
+            verification_status=verification_status,
         )
         try:
             self.append_envelope(env)
@@ -271,6 +308,88 @@ class JsonlStorage:
                 os.fsync(handle.fileno())
         except OSError as exc:
             raise StorageWriteError(str(exc)) from exc
+
+    def doctor(self) -> DoctorReport:
+        issues: list[str] = []
+        warnings: list[str] = []
+        hints: list[str] = [
+            "JSONL legacy mode: SQLite is the recommended production backend.",
+            "Reindex from raw is best-effort only; prefer migrating to SQLite.",
+        ]
+        for name, path in (
+            ("artifacts", self.artifacts_jsonl),
+            ("envelopes", self.index_dir / "envelopes.jsonl"),
+            ("conflicts", self.index_dir / "conflicts.jsonl"),
+        ):
+            if not path.exists():
+                continue
+            try:
+                self.read_jsonl(path)
+            except IndexCorruptionError as exc:
+                issues.append(f"Corrupt JSONL ({name}): {exc}")
+        arts = self.list_artifacts()
+        for art in arts:
+            if not Path(art.path).is_file():
+                issues.append(f"Missing raw artifact file for {art.artifact_id}: {art.path}")
+        if issues:
+            hints.append("If envelopes reference missing raws, run `hermes-mp reindex --dry-run` (limited) or restore from backup.")
+        return DoctorReport(ok=not issues, backend="jsonl", db_path=None, issues=issues, warnings=warnings, hints=hints)
+
+    def migrate_schema(self) -> tuple[list[str], list[str]]:
+        raise UnsupportedStorageOperation("migrate_schema requires SQLite backend")
+
+    def stats(self) -> StorageStats:
+        envs = self.list_envelopes()
+        arts = self.list_artifacts()
+        confs = self.list_conflicts()
+        rooms: dict[str, int] = {}
+        fts: dict[str, int] = {}
+        for e in envs:
+            rooms[e.room] = rooms.get(e.room, 0) + 1
+            fts[e.fact_type] = fts.get(e.fact_type, 0) + 1
+        red: dict[str, int] = {}
+        for a in arts:
+            red[a.redaction_status] = red.get(a.redaction_status, 0) + 1
+        unresolved = sum(1 for c in confs if (c.status or "unresolved") == "unresolved")
+        return StorageStats(
+            backend="jsonl",
+            envelopes=len(envs),
+            artifacts=len(arts),
+            conflicts=len(confs),
+            unresolved_conflicts=unresolved,
+            resolved_conflicts=max(0, len(confs) - unresolved),
+            pinned_envelopes=sum(1 for e in envs if e.pinned),
+            rooms=rooms,
+            fact_types=fts,
+            redaction=red,
+            db_path=None,
+        )
+
+    def reindex_from_raw(self, *, dry_run: bool = True) -> ReindexResult:
+        notes = [
+            "JSONL reindex is best-effort: only missing artifact index rows can be partially reconciled.",
+        ]
+        return ReindexResult(dry_run=dry_run, backend="jsonl", notes=notes, errors=[])
+
+    def set_memory_pinned(self, memory_id: str, pinned: bool, reason: str) -> None:
+        envs = self.list_envelopes()
+        if not any(e.memory_id == memory_id for e in envs):
+            raise StorageWriteError(f"Unknown memory_id: {memory_id}")
+        if pinned:
+            self.append_pin(memory_id, reason)
+            return
+        raise UnsupportedStorageOperation(
+            "JSONL legacy backend cannot unpin reliably (append-only index). Use SQLite."
+        )
+
+    def find_memory_by_artifact_sha256(self, sha256: str) -> MemoryEnvelope | None:
+        arts = {a.artifact_id: a for a in self.list_artifacts()}
+        for aid, a in arts.items():
+            if a.sha256 == sha256:
+                for env in self.list_envelopes():
+                    if aid in env.provenance_artifact_ids:
+                        return env
+        return None
 
 
 class RoutingStorage(JsonlStorage):

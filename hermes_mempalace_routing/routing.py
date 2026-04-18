@@ -92,6 +92,15 @@ class RouteScorer:
                 score_breakdown={},
             )
 
+        if self._memory_is_conflict_loser(env, conflicts):
+            return RouteCandidate(
+                room=env.room,
+                memory_id=env.memory_id,
+                score=0.0,
+                rationale=["conflict_loser_excluded"],
+                score_breakdown={},
+            )
+
         summary = env.summary.lower()
         route_tags = [tag.lower() for tag in env.route_tags]
         q_tokens = [t for t in query.lower().split() if t]
@@ -170,5 +179,15 @@ class RouteScorer:
             if c.status != ConflictStatus.UNRESOLVED.value:
                 continue
             if env.memory_id in c.candidate_memory_ids:
+                return True
+        return False
+
+    @staticmethod
+    def _memory_is_conflict_loser(env: MemoryEnvelope, conflicts: list[ConflictRecord]) -> bool:
+        for c in conflicts:
+            if c.status == ConflictStatus.UNRESOLVED.value:
+                continue
+            losers = c.loser_memory_ids or []
+            if env.memory_id in losers:
                 return True
         return False

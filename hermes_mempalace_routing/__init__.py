@@ -4,12 +4,14 @@ from .config import STANDARD_ROOMS, RoutingConfig, project_room
 from .models import (
     ConflictRecord,
     ContextBudget,
+    DoctorReport,
     InjectedEvidence,
     MemoryEnvelope,
     RawArtifact,
     RawDiagnosticExcerpt,
     RouteCandidate,
     RouteRun,
+    StorageStats,
 )
 from .plugin import HermesMemPalaceRoutingPlugin
 from .storage import (
@@ -18,6 +20,7 @@ from .storage import (
     StorageError,
     StorageReadError,
     StorageWriteError,
+    UnsupportedStorageOperation,
     create_storage,
 )
 
@@ -30,6 +33,7 @@ __all__ = [
     "STANDARD_ROOMS",
     "ConflictRecord",
     "ContextBudget",
+    "DoctorReport",
     "HermesMemPalaceRoutingPlugin",
     "IndexCorruptionError",
     "InjectedEvidence",
@@ -42,7 +46,9 @@ __all__ = [
     "StorageBackend",
     "StorageError",
     "StorageReadError",
+    "StorageStats",
     "StorageWriteError",
+    "UnsupportedStorageOperation",
     "create_storage",
     "project_room",
     "__version__",

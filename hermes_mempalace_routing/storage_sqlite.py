@@ -8,8 +8,16 @@ import sqlite3
 from pathlib import Path
 
 from .config import RoutingConfig
-from .migrations import MigrationError, migrate
-from .models import ConflictRecord, MemoryEnvelope, RawArtifact, RouteRun
+from .migrations import MigrationError, expected_migration_versions, migrate, read_applied_versions
+from .models import (
+    ConflictRecord,
+    DoctorReport,
+    MemoryEnvelope,
+    RawArtifact,
+    ReindexResult,
+    RouteRun,
+    StorageStats,
+)
 from .storage import IndexCorruptionError, StorageReadError, StorageWriteError
 
 
@@ -171,18 +179,20 @@ class SQLiteRoutingStorage:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO conflicts (
-                    conflict_key, room, candidate_memory_ids, resolved_memory_id, resolution_reason,
-                    status, resolution_actor
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    conflict_key, room, candidate_memory_ids, resolved_memory_id, loser_memory_ids,
+                    resolution_reason, status, resolution_actor, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conflict.conflict_key,
                     conflict.room,
                     _json_dumps(conflict.candidate_memory_ids),
                     conflict.resolved_memory_id,
+                    _json_dumps(conflict.loser_memory_ids or []),
                     conflict.resolution_reason,
                     conflict.status,
                     conflict.resolution_actor,
+                    conflict.resolved_at,
                 ),
             )
             conn.commit()
@@ -281,15 +291,31 @@ class SQLiteRoutingStorage:
                 raw_ids = _json_loads(row["candidate_memory_ids"])
                 if not isinstance(raw_ids, list):
                     raise IndexCorruptionError("Malformed conflicts.candidate_memory_ids")
+                try:
+                    losers_raw = row["loser_memory_ids"]
+                except (KeyError, IndexError):
+                    losers_raw = "[]"
+                try:
+                    raw_losers = _json_loads(losers_raw)
+                except IndexCorruptionError:
+                    raw_losers = []
+                if not isinstance(raw_losers, list):
+                    raw_losers = []
+                try:
+                    resolved_at = row["resolved_at"]
+                except (KeyError, IndexError):
+                    resolved_at = None
                 out.append(
                     ConflictRecord(
                         conflict_key=row["conflict_key"],
                         room=row["room"],
                         candidate_memory_ids=[str(x) for x in raw_ids],
                         resolved_memory_id=row["resolved_memory_id"],
+                        loser_memory_ids=[str(x) for x in raw_losers],
                         resolution_reason=row["resolution_reason"],
                         status=row["status"] or "unresolved",
                         resolution_actor=row["resolution_actor"],
+                        resolved_at=resolved_at,
                     )
                 )
             return out
@@ -387,6 +413,10 @@ class SQLiteRoutingStorage:
         route_tags: list[str] | None,
         conflict_key: str | None,
         pinned: bool,
+        *,
+        classification_source: str = "rule",
+        verification_status: str = "unverified",
+        raw_redaction_status: str = "none",
     ) -> MemoryEnvelope:
         route_tags = route_tags or []
         now = datetime.now(UTC)
@@ -405,7 +435,7 @@ class SQLiteRoutingStorage:
             path=str(path),
             size_bytes=len(text.encode("utf-8")),
             sha256=sha256,
-            redaction_status="none",
+            redaction_status=raw_redaction_status,
         )
         env_now = now.isoformat()
         env = MemoryEnvelope(
@@ -421,6 +451,8 @@ class SQLiteRoutingStorage:
             conflict_key=conflict_key,
             created_at=env_now,
             updated_at=env_now,
+            classification_source=classification_source,
+            verification_status=verification_status,
         )
         conn = self._connect()
         try:
@@ -443,3 +475,227 @@ class SQLiteRoutingStorage:
         finally:
             conn.close()
         return env
+
+    def migrate_schema(self) -> tuple[list[str], list[str]]:
+        migrate(self.db_path)
+        applied = read_applied_versions(self.db_path)
+        return (expected_migration_versions(), applied)
+
+    def find_memory_by_artifact_sha256(self, sha256: str) -> MemoryEnvelope | None:
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT e.* FROM envelopes e
+                JOIN json_each(e.provenance_artifact_ids) AS j
+                JOIN artifacts a ON a.artifact_id = j.value
+                WHERE a.sha256 = ?
+                LIMIT 1
+                """,
+                (sha256,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return self._row_to_envelope(row)
+        except sqlite3.Error as exc:
+            raise StorageReadError(str(exc)) from exc
+        finally:
+            conn.close()
+
+    def set_memory_pinned(self, memory_id: str, pinned: bool, reason: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute("SELECT memory_id FROM envelopes WHERE memory_id = ?", (memory_id,))
+            if cur.fetchone() is None:
+                raise StorageWriteError(f"Unknown memory_id: {memory_id}")
+            conn.execute(
+                "UPDATE envelopes SET pinned = ?, updated_at = ? WHERE memory_id = ?",
+                (1 if pinned else 0, now, memory_id),
+            )
+            conn.execute(
+                "INSERT INTO pins (memory_id, reason, created_at, pinned) VALUES (?, ?, ?, ?)",
+                (memory_id, reason, now, 1 if pinned else 0),
+            )
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            raise StorageWriteError(str(exc)) from exc
+        finally:
+            conn.close()
+
+    def stats(self) -> StorageStats:
+        conn = self._connect()
+        try:
+            n_env = int(conn.execute("SELECT COUNT(*) FROM envelopes").fetchone()[0])
+            n_art = int(conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0])
+            n_conf = int(conn.execute("SELECT COUNT(*) FROM conflicts").fetchone()[0])
+            n_unres = int(
+                conn.execute("SELECT COUNT(*) FROM conflicts WHERE status = ?", ("unresolved",)).fetchone()[0]
+            )
+            n_pin = int(conn.execute("SELECT COUNT(*) FROM envelopes WHERE pinned = 1").fetchone()[0])
+            rooms: dict[str, int] = {}
+            for row in conn.execute("SELECT room, COUNT(*) FROM envelopes GROUP BY room"):
+                rooms[str(row[0])] = int(row[1])
+            fts: dict[str, int] = {}
+            for row in conn.execute("SELECT fact_type, COUNT(*) FROM envelopes GROUP BY fact_type"):
+                fts[str(row[0])] = int(row[1])
+            red: dict[str, int] = {}
+            for row in conn.execute("SELECT redaction_status, COUNT(*) FROM artifacts GROUP BY redaction_status"):
+                red[str(row[0])] = int(row[1])
+            return StorageStats(
+                backend="sqlite",
+                envelopes=n_env,
+                artifacts=n_art,
+                conflicts=n_conf,
+                unresolved_conflicts=n_unres,
+                resolved_conflicts=max(0, n_conf - n_unres),
+                pinned_envelopes=n_pin,
+                rooms=rooms,
+                fact_types=fts,
+                redaction=red,
+                db_path=str(self.db_path),
+            )
+        except sqlite3.Error as exc:
+            raise StorageReadError(str(exc)) from exc
+        finally:
+            conn.close()
+
+    def doctor(self) -> DoctorReport:
+        issues: list[str] = []
+        warnings: list[str] = []
+        hints: list[str] = []
+        exp = expected_migration_versions()
+        applied = read_applied_versions(self.db_path)
+        if set(exp) != set(applied):
+            issues.append(
+                f"Schema migration mismatch: expected {sorted(exp)}, applied {sorted(applied)}. Run `hermes-mp migrate`."
+            )
+        try:
+            conn = self._connect()
+            required = {"artifacts", "envelopes", "conflicts", "schema_migrations", "pins", "route_runs"}
+            cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            present = {row[0] for row in cur.fetchall()}
+            missing = sorted(required - present)
+            if missing:
+                issues.append(f"Missing tables: {missing}")
+            conn.close()
+        except sqlite3.DatabaseError as exc:
+            issues.append(f"SQLite open/query failed (possible corruption): {exc}")
+            return DoctorReport(
+                ok=False,
+                backend="sqlite",
+                db_path=str(self.db_path),
+                schema_versions_expected=exp,
+                schema_versions_applied=applied,
+                issues=issues,
+                warnings=warnings,
+                hints=hints + ["Try `hermes-mp migrate` or restore metadata.db from backup."],
+            )
+
+        for art in self.list_artifacts():
+            p = Path(art.path)
+            if not p.is_file():
+                issues.append(f"Missing raw artifact file for {art.artifact_id}: {art.path}")
+
+        if not issues:
+            hints.append("No blocking issues detected for SQLite metadata and raw artifacts.")
+        return DoctorReport(
+            ok=not issues,
+            backend="sqlite",
+            db_path=str(self.db_path),
+            schema_versions_expected=exp,
+            schema_versions_applied=applied,
+            issues=issues,
+            warnings=warnings,
+            hints=hints,
+        )
+
+    def reindex_from_raw(self, *, dry_run: bool = True) -> ReindexResult:
+        notes: list[str] = []
+        errors: list[str] = []
+        inserted = 0
+        touched = 0
+        skipped = 0
+        for path in sorted(self.raw_dir.rglob("*.txt")):
+            if path.name.endswith(".tmp"):
+                continue
+            stem = path.stem
+            if "_" not in stem:
+                continue
+            artifact_id, kind = stem.rsplit("_", 1)
+            if not artifact_id.startswith("art_"):
+                continue
+            try:
+                body = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+                continue
+            sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            conn: sqlite3.Connection | None = None
+            try:
+                conn = self._connect()
+                cur = conn.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?", (artifact_id,))
+                if cur.fetchone() is not None:
+                    skipped += 1
+                    continue
+                touched += 1
+                if dry_run:
+                    inserted += 1
+                    continue
+                now = datetime.now(UTC).isoformat()
+                raw = RawArtifact(
+                    artifact_id=artifact_id,
+                    turn_id="reindex",
+                    kind=kind,
+                    created_at=now,
+                    path=str(path),
+                    size_bytes=len(body.encode("utf-8")),
+                    sha256=sha,
+                    redaction_status="none",
+                )
+                env = MemoryEnvelope(
+                    memory_id=f"mem_{artifact_id}",
+                    room="errors",
+                    route_tags=[],
+                    fact_type=kind,
+                    summary="reindexed from raw",
+                    provenance_artifact_ids=[artifact_id],
+                    provenance_excerpt=None,
+                    confidence=0.5,
+                    pinned=False,
+                    conflict_key=None,
+                    created_at=now,
+                    updated_at=now,
+                    classification_source="import",
+                )
+                conn.execute("BEGIN IMMEDIATE")
+                self._insert_artifact_row(conn, raw)
+                self._insert_envelope_row(conn, env)
+                conn.commit()
+                inserted += 1
+            except Exception as exc:
+                if conn is not None:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                errors.append(f"{path}: {exc}")
+            finally:
+                if conn is not None:
+                    conn.close()
+
+        notes.append(
+            f"Scanned raw tree; inserted={inserted}, skipped_existing={skipped}, touched_files={touched}."
+        )
+        return ReindexResult(
+            dry_run=dry_run,
+            backend="sqlite",
+            envelopes_inserted=inserted,
+            artifacts_touched=touched,
+            skipped=skipped,
+            errors=errors,
+            notes=notes,
+        )

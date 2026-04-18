@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import RoutingConfig
+from .conflicts import list_conflicts
 from .context_engine import RoutingContextEngine
 from .models import MemoryEnvelope, RouteRun
 from .provider import MemPalaceRoutingProvider
@@ -19,7 +20,7 @@ class HermesMemPalaceRoutingPlugin:
         self.config = config or RoutingConfig.default()
         self.config.validate()
         self.storage: StorageBackend = create_storage(self.config)
-        self.provider = MemPalaceRoutingProvider(self.storage)
+        self.provider = MemPalaceRoutingProvider(self.storage, self.config)
         self.context_engine = RoutingContextEngine(RouteScorer(self.config), self.config)
 
     def record_turn_artifact(
@@ -46,6 +47,7 @@ class HermesMemPalaceRoutingPlugin:
                 route_tags=route_tags,
                 conflict_key=conflict_key,
                 pinned=pinned,
+                fail_open=self.config.fail_open_to_hermes_summarization,
             )
         except StorageError:
             if self.config.fail_open_to_hermes_summarization:
@@ -100,7 +102,11 @@ class HermesMemPalaceRoutingPlugin:
         mode: str,
     ) -> dict[str, Any]:
         envelopes = self.storage.list_envelopes()
-        conflicts = self.storage.list_conflicts()
+        conflicts = list_conflicts(
+            envelopes,
+            self.config,
+            stored=self.storage.list_conflicts(),
+        )
         budget = self.context_engine.allocate_budget(total_tokens)
         max_raw_chars = max(256, self.config.max_raw_excerpt_tokens * 4)
 

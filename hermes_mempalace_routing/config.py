@@ -22,6 +22,9 @@ def project_room(name: str) -> str:
 StorageBackendName = Literal["sqlite", "jsonl"]
 TokenizerStrategy = Literal["auto", "tiktoken", "estimate"]
 TrimPolicy = Literal["deterministic_v1"]
+RedactionPolicy = Literal["none", "mask", "drop"]
+
+CONFLICT_PRECEDENCE_TERMS: frozenset[str] = frozenset({"runtime_truth", "pin", "newer_verified"})
 
 
 def _default_room_weights_debugging() -> dict[str, float]:
@@ -55,7 +58,8 @@ class RoutingConfig:
     fail_open_to_hermes_summarization: bool = True
     replace_hermes_summarization: bool = True
     write_raw_artifacts: bool = True
-    redact_before_persist: bool = False
+    redact_before_persist: bool = True
+    redaction_policy: RedactionPolicy = "mask"
     tokenizer_strategy: TokenizerStrategy = "estimate"
     inject_top_k_routes: int = 4
     inject_top_k_raw_excerpts: int = 2
@@ -63,8 +67,14 @@ class RoutingConfig:
     retention_project_days: int | None = None
     room_weights_by_mode: dict[str, dict[str, float]] = field(default_factory=dict)
     conflict_precedence: list[str] = field(
-        default_factory=lambda: ["pin", "runtime_truth", "newer_verified"]
+        default_factory=lambda: ["runtime_truth", "pin", "newer_verified"]
     )
+    dedupe_identical_raw: bool = True
+    """Skip new envelopes when raw body SHA256 already exists (exact duplicate)."""
+    dedupe_normalize_for_signature: bool = True
+    """Normalize whitespace for stack/shell grouping signatures (exact line collapse)."""
+    repeat_error_group_window: int = 10_000
+    """Max recent envelopes scanned when grouping repeated stderr/stack fingerprints."""
     # Routing / scoring (Sprint 2)
     route_score_threshold: float = 0.0
     unresolved_conflict_penalty: float = 0.35
@@ -146,3 +156,28 @@ class RoutingConfig:
             raise ValueError(
                 "redact_before_persist requires write_raw_artifacts (nothing to redact otherwise)"
             )
+        if self.redaction_policy not in ("none", "mask", "drop"):
+            raise ValueError(f"Unknown redaction_policy: {self.redaction_policy}")
+        if self.redaction_policy != "none" and not self.redact_before_persist:
+            raise ValueError("redaction_policy requires redact_before_persist=True")
+
+        seen_prec: set[str] = set()
+        if not self.conflict_precedence:
+            raise ValueError("conflict_precedence must be non-empty")
+        for term in self.conflict_precedence:
+            if term not in CONFLICT_PRECEDENCE_TERMS:
+                raise ValueError(
+                    f"Unknown conflict_precedence term {term!r}; "
+                    f"allowed: {sorted(CONFLICT_PRECEDENCE_TERMS)}"
+                )
+            if term in seen_prec:
+                raise ValueError(f"Duplicate conflict_precedence term: {term}")
+            seen_prec.add(term)
+        if seen_prec != CONFLICT_PRECEDENCE_TERMS:
+            raise ValueError(
+                "conflict_precedence must include each term exactly once: "
+                f"{sorted(CONFLICT_PRECEDENCE_TERMS)}"
+            )
+
+        if self.repeat_error_group_window < 0 or self.repeat_error_group_window > 1_000_000:
+            raise ValueError("repeat_error_group_window must be in [0, 1000000]")

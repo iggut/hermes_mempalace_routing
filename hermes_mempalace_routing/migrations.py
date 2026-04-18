@@ -110,9 +110,37 @@ def _migration_001_initial(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_002_conflict_losers(conn: sqlite3.Connection) -> None:
+    """Add loser tracking and resolution timestamps for truth management."""
+    cur = conn.execute("PRAGMA table_info(conflicts)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "loser_memory_ids" not in cols:
+        conn.execute("ALTER TABLE conflicts ADD COLUMN loser_memory_ids TEXT NOT NULL DEFAULT '[]'")
+    if "resolved_at" not in cols:
+        conn.execute("ALTER TABLE conflicts ADD COLUMN resolved_at TEXT")
+
+
 MIGRATIONS: list[tuple[str, Callable[[sqlite3.Connection], None]]] = [
     ("001_initial", _migration_001_initial),
+    ("002_conflict_losers", _migration_002_conflict_losers),
 ]
+
+
+def expected_migration_versions() -> list[str]:
+    return [v for v, _ in MIGRATIONS]
+
+
+def read_applied_versions(db_path: Path) -> list[str]:
+    """Return sorted applied migration versions without running upgrades."""
+    if not db_path.is_file():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        _ensure_schema_migrations_table(conn)
+        cur = conn.execute("SELECT version FROM schema_migrations ORDER BY version")
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
 def migrate(
@@ -172,10 +200,11 @@ def assert_schema_migrations(db_path: Path) -> None:
                 "run migrations or remove the file to reinitialize."
             )
         applied = _applied_versions(conn)
-        if "001_initial" not in applied:
-            raise MigrationError(
-                f"Database at {db_path} is missing baseline migration 001_initial. "
-                "Run migrations or restore from backup."
-            )
+        for version, _ in MIGRATIONS:
+            if version not in applied:
+                raise MigrationError(
+                    f"Database at {db_path} is missing migration {version}. "
+                    "Run `hermes-mp migrate` or apply migrations programmatically."
+                )
     finally:
         conn.close()
