@@ -228,7 +228,7 @@ class HermesMemPalaceRoutingPlugin:
         mode: str = "debugging",
     ) -> dict[str, Any]:
         """Hermes pre-model hook: route-selected evidence, fail-open to summarization on error."""
-        if not self.config.enabled:
+        if not self.config.enabled or not self.config.replace_hermes_summarization:
             return self._empty_disabled_payload(query, total_tokens, active_project, mode)
         try:
             return self._build_context_inner(query, total_tokens, active_project, mode)
@@ -242,6 +242,44 @@ class HermesMemPalaceRoutingPlugin:
                     mode=mode,
                 )
             raise
+
+    def pre_model_context_assembly(
+        self,
+        query: str,
+        total_tokens: int,
+        active_project: str | None = None,
+        mode: str = "debugging",
+    ) -> dict[str, Any]:
+        """Compatibility hook for the host app's pre-model context assembly seam."""
+        return self.build_context_for_query(
+            query=query,
+            total_tokens=total_tokens,
+            active_project=active_project,
+            mode=mode,
+        )
+
+    def post_turn_artifact_ingestion(
+        self,
+        turn_id: str,
+        room: str,
+        fact_type: str,
+        summary: str,
+        raw_text: str,
+        route_tags: list[str] | None = None,
+        conflict_key: str | None = None,
+        pinned: bool = False,
+    ) -> MemoryEnvelope | None:
+        """Compatibility hook for post-turn raw artifact persistence."""
+        return self.record_turn_artifact(
+            turn_id=turn_id,
+            room=room,
+            fact_type=fact_type,
+            summary=summary,
+            raw_text=raw_text,
+            route_tags=route_tags,
+            conflict_key=conflict_key,
+            pinned=pinned,
+        )
 
     @classmethod
     def from_base_dir(cls, base_dir: str | Path) -> "HermesMemPalaceRoutingPlugin":

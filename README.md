@@ -33,6 +33,7 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 ## Fail-open behavior
 
 - When **`fail_open_to_hermes_summarization`** is enabled (default), storage/ingest failures during `record_turn_artifact` return **`None`** instead of breaking chat.
+- When **`replace_hermes_summarization`** is disabled, `build_context_for_query` returns the disabled payload so the host can keep using its legacy summarization path.
 - Routing failures in **`build_context_for_query`** return a fallback payload with **`fallback_used=True`** and a traced **`RouteRun`** when possible.
 
 ## Package layout
@@ -50,7 +51,41 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 | `provider.py` | Deterministic ingest pipeline (validate → redact → dedupe → classify → persist → sync conflicts) |
 | `conflicts.py` | Detect/resolve/list, effective memory selection |
 | `plugin.py` | Thin Hermes facade (orchestration + fail-open boundary) |
+| `host_hooks.py` | Host-facing bridge exposing the pre-model / post-turn hook methods |
 | `cli.py` | `hermes-mp` operator commands |
+
+## Tiny host integration example
+
+Use the file below if you want a copy-paste runnable sample:
+
+- `examples/host_hooks_example.py`
+- run it with: `python examples/host_hooks_example.py`
+
+```python
+from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
+
+hooks = HermesHostHooks.from_config(RoutingConfig.default())
+
+# Post-turn: store the exact raw artifact first.
+hooks.post_turn_artifact_ingestion(
+    turn_id="turn-123",
+    room="project/hermes",
+    fact_type="stacktrace",
+    summary="Hermes startup failed with SyntaxError",
+    raw_text='SyntaxError: invalid syntax\n  File "run_agent.py", line 1\n',
+    route_tags=["syntaxerror", "startup"],
+)
+
+# Pre-model: build the routed context block for the next prompt.
+payload = hooks.pre_model_context_assembly(
+    query="why did Hermes startup fail?",
+    total_tokens=8000,
+    active_project="hermes",
+    mode="debugging",
+)
+
+print(payload["rendered_block"])
+```
 
 ## Room model
 
