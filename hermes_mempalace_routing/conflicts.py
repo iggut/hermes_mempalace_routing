@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .models import ConflictRecord, MemoryEnvelope
+from .models import ConflictRecord, ConflictStatus, MemoryEnvelope
 
 
 class ConflictResolver:
@@ -19,6 +19,7 @@ class ConflictResolver:
             pinned = [env for env in group if env.pinned]
             resolved = pinned[0].memory_id if pinned else None
             reason = "pinned" if pinned else None
+            status = ConflictStatus.RESOLVED_BY_PIN.value if pinned else ConflictStatus.UNRESOLVED.value
             conflicts.append(
                 ConflictRecord(
                     conflict_key=key,
@@ -26,6 +27,8 @@ class ConflictResolver:
                     candidate_memory_ids=[env.memory_id for env in group],
                     resolved_memory_id=resolved,
                     resolution_reason=reason,
+                    status=status,
+                    resolution_actor="operator" if pinned else None,
                 )
             )
         return conflicts

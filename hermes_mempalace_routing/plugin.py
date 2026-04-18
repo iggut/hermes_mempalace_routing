@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .config import RoutingConfig
 from .context_engine import RoutingContextEngine
+from .models import MemoryEnvelope, RouteRun
 from .provider import MemPalaceRoutingProvider
 from .routing import RouteScorer
-from .storage import RoutingStorage
+from .storage import StorageBackend, StorageError, create_storage
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(0, (len(text) + 3) // 4)
 
 
 class HermesMemPalaceRoutingPlugin:
+    """Hermes integration surface: thin hooks delegate to routing and storage backends."""
+
     def __init__(self, config: RoutingConfig | None = None):
         self.config = config or RoutingConfig.default()
-        self.storage = RoutingStorage(self.config.base_dir)
+        self.config.validate()
+        self.storage: StorageBackend = create_storage(self.config)
         self.provider = MemPalaceRoutingProvider(self.storage)
         self.context_engine = RoutingContextEngine(RouteScorer())
 
@@ -26,38 +35,82 @@ class HermesMemPalaceRoutingPlugin:
         route_tags: list[str] | None = None,
         conflict_key: str | None = None,
         pinned: bool = False,
-    ):
-        """Persist an exact raw artifact plus a routing envelope.
+    ) -> MemoryEnvelope | None:
+        """Persist a raw artifact plus envelope when enabled; otherwise no-op."""
+        if not self.config.enabled or not self.config.write_raw_artifacts:
+            return None
+        try:
+            return self.provider.store_artifact_as_memory(
+                turn_id=turn_id,
+                room=room,
+                fact_type=fact_type,
+                summary=summary,
+                raw_text=raw_text,
+                route_tags=route_tags,
+                conflict_key=conflict_key,
+                pinned=pinned,
+            )
+        except StorageError:
+            if self.config.fail_open_to_hermes_summarization:
+                return None
+            raise
 
-        TODO(Hermes): call this from the post-turn artifact ingestion hook after user turns,
-        assistant replies, tool output, shell output, and stack traces are produced.
-        """
-        return self.provider.store_artifact_as_memory(
-            turn_id=turn_id,
-            room=room,
-            fact_type=fact_type,
-            summary=summary,
-            raw_text=raw_text,
-            route_tags=route_tags,
-            conflict_key=conflict_key,
-            pinned=pinned,
+    def on_routing_failure(
+        self,
+        error: BaseException,
+        *,
+        query: str,
+        total_tokens: int,
+        active_project: str | None,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Hermes fallback payload when routing fails; keeps summarization path viable."""
+        budget = self.context_engine.allocate_budget(total_tokens)
+        trace = RouteRun(
+            query=query,
+            mode=mode,
+            active_project=active_project,
+            route_candidates=[],
+            selected_evidence_ids=[],
+            dropped_evidence_ids=[],
+            dropped_reasons={},
+            token_counts={
+                "total_budget": total_tokens,
+                "rendered_budget_tokens": 0,
+            },
+            fallback_used=True,
+            routing_disabled=False,
+            error=f"{type(error).__name__}: {error}",
         )
+        try:
+            self.storage.insert_route_run(trace)
+        except StorageError:
+            pass
+        return {
+            "budget": budget,
+            "route_candidates": [],
+            "evidence": [],
+            "raw_diagnostic_excerpts": [],
+            "rendered_block": "",
+            "trace": trace,
+            "fallback_used": True,
+            "routing_disabled": False,
+            "error": str(error),
+        }
 
-    def build_context_for_query(
+    def _build_context_inner(
         self,
         query: str,
         total_tokens: int,
-        active_project: str | None = None,
-        mode: str = "debugging",
-    ) -> dict:
-        """Return route-selected evidence for prompt assembly (top routes + top raw diagnostics).
-
-        TODO(Hermes): register as pre-model context assembly hook; run before any summarization
-        fallback so generic compression does not replace this path.
-        """
+        active_project: str | None,
+        mode: str,
+    ) -> dict[str, Any]:
         envelopes = self.storage.list_envelopes()
         budget = self.context_engine.allocate_budget(total_tokens)
-        max_raw_inline = max(256, budget.raw_diagnostics * 4 // max(self.config.inject_top_k_routes, 1))
+        max_raw_inline = max(
+            256,
+            budget.raw_diagnostics * 4 // max(self.config.inject_top_k_routes, 1),
+        )
         evidence, ranked = self.context_engine.select_evidence(
             query=query,
             envelopes=envelopes,
@@ -80,13 +133,102 @@ class HermesMemPalaceRoutingPlugin:
             budget=budget,
             already_cited_artifact_ids=cited,
         )
+        rendered = self.context_engine.render_injected_block(evidence, raw_excerpts)
+        selected_ids = [ev.memory_id for ev in evidence]
+        ranked_ids = [c.memory_id for c in ranked]
+        dropped_set = [mid for mid in ranked_ids if mid not in selected_ids]
+        dropped_reasons = {mid: "below_top_k" for mid in dropped_set}
+        token_counts = {
+            "total_budget": total_tokens,
+            "routed_memory_budget": budget.routed_memory,
+            "raw_diag_budget": budget.raw_diagnostics,
+            "rendered_block_tokens_est": _estimate_tokens(rendered),
+        }
+        trace = RouteRun(
+            query=query,
+            mode=mode,
+            active_project=active_project,
+            route_candidates=ranked,
+            selected_evidence_ids=selected_ids,
+            dropped_evidence_ids=dropped_set,
+            dropped_reasons=dropped_reasons,
+            token_counts=token_counts,
+            fallback_used=False,
+            routing_disabled=False,
+            error=None,
+        )
+        try:
+            self.storage.insert_route_run(trace)
+        except StorageError:
+            pass
         return {
             "budget": budget,
             "route_candidates": ranked,
             "evidence": evidence,
             "raw_diagnostic_excerpts": raw_excerpts,
-            "rendered_block": self.context_engine.render_injected_block(evidence, raw_excerpts),
+            "rendered_block": rendered,
+            "trace": trace,
+            "fallback_used": False,
+            "routing_disabled": False,
+            "error": None,
         }
+
+    def _empty_disabled_payload(
+        self,
+        query: str,
+        total_tokens: int,
+        active_project: str | None,
+        mode: str,
+    ) -> dict[str, Any]:
+        budget = self.context_engine.allocate_budget(total_tokens)
+        trace = RouteRun(
+            query=query,
+            mode=mode,
+            active_project=active_project,
+            route_candidates=[],
+            selected_evidence_ids=[],
+            dropped_evidence_ids=[],
+            dropped_reasons={},
+            token_counts={"total_budget": total_tokens,
+                "rendered_block_tokens_est": 0},
+            fallback_used=False,
+            routing_disabled=True,
+            error=None,
+        )
+        return {
+            "budget": budget,
+            "route_candidates": [],
+            "evidence": [],
+            "raw_diagnostic_excerpts": [],
+            "rendered_block": "",
+            "trace": trace,
+            "fallback_used": False,
+            "routing_disabled": True,
+            "error": None,
+        }
+
+    def build_context_for_query(
+        self,
+        query: str,
+        total_tokens: int,
+        active_project: str | None = None,
+        mode: str = "debugging",
+    ) -> dict[str, Any]:
+        """Hermes pre-model hook: route-selected evidence, fail-open to summarization on error."""
+        if not self.config.enabled:
+            return self._empty_disabled_payload(query, total_tokens, active_project, mode)
+        try:
+            return self._build_context_inner(query, total_tokens, active_project, mode)
+        except Exception as exc:
+            if self.config.fail_open_to_hermes_summarization:
+                return self.on_routing_failure(
+                    exc,
+                    query=query,
+                    total_tokens=total_tokens,
+                    active_project=active_project,
+                    mode=mode,
+                )
+            raise
 
     @classmethod
     def from_base_dir(cls, base_dir: str | Path) -> "HermesMemPalaceRoutingPlugin":

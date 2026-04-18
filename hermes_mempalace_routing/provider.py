@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from .models import MemoryEnvelope
-from .storage import RoutingStorage
+from .storage import StorageBackend
 
 
 class MemPalaceRoutingProvider:
-    def __init__(self, storage: RoutingStorage):
+    def __init__(self, storage: StorageBackend):
         self.storage = storage
 
     def store_artifact_as_memory(
@@ -21,25 +19,13 @@ class MemPalaceRoutingProvider:
         conflict_key: str | None = None,
         pinned: bool = False,
     ) -> MemoryEnvelope:
-        route_tags = route_tags or []
-        raw = self.storage.persist_raw_artifact(turn_id=turn_id, kind=fact_type, text=raw_text)
-        now = datetime.now(UTC).isoformat()
-        # Raw text lives only on disk; envelopes reference artifact ids (no rewriting of raw).
-        env = MemoryEnvelope(
-            memory_id=f"mem_{raw.artifact_id}",
+        return self.storage.persist_memory_turn(
+            turn_id=turn_id,
             room=room,
-            route_tags=route_tags,
             fact_type=fact_type,
             summary=summary,
-            provenance_artifact_ids=[raw.artifact_id],
-            provenance_excerpt=None,
-            confidence=0.9 if fact_type in {"stacktrace", "shell_output", "tool_output"} else 0.7,
-            pinned=pinned,
+            raw_text=raw_text,
+            route_tags=route_tags,
             conflict_key=conflict_key,
-            created_at=now,
-            updated_at=now,
+            pinned=pinned,
         )
-        self.storage.append_envelope(env)
-        if pinned:
-            self.storage.append_pin(env.memory_id, "created pinned")
-        return env

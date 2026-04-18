@@ -8,7 +8,7 @@ from .models import (
     RouteCandidate,
 )
 from .routing import RouteScorer
-from .storage import RoutingStorage
+from .storage import StorageBackend
 
 _DIAGNOSTIC_FACTS = frozenset({"stacktrace", "shell_output", "tool_output"})
 
@@ -57,7 +57,7 @@ class RoutingContextEngine:
         envelopes: list[MemoryEnvelope],
         active_project: str | None,
         mode: str,
-        storage: RoutingStorage,
+        storage: StorageBackend,
         top_k: int = 4,
         max_raw_chars_per_evidence: int = 2000,
     ) -> tuple[list[InjectedEvidence], list[RouteCandidate]]:
@@ -89,7 +89,7 @@ class RoutingContextEngine:
         envelopes: list[MemoryEnvelope],
         active_project: str | None,
         mode: str,
-        storage: RoutingStorage,
+        storage: StorageBackend,
         top_k: int = 2,
         budget: ContextBudget | None = None,
         already_cited_artifact_ids: frozenset[str] | None = None,
