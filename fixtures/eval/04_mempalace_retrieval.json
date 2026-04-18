@@ -56,6 +56,17 @@
       "route_tags": [],
       "conflict_key": null,
       "pinned": false
+    },
+    {
+      "alias": "repeat_stack",
+      "turn_id": "rsig1",
+      "room": "errors",
+      "fact_type": "stacktrace",
+      "summary": "repeated identical stderr fingerprint",
+      "raw_text": "Traceback (most recent call last):\n  File \"svc.py\", line 3\nMP_REPEAT_SIG_ERR\nRuntimeError: duplicate fingerprint",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
     }
   ],
   "cases": [
@@ -114,6 +125,27 @@
         "mempalace": {
           "verbatim_substring_in_rendered": "VERBATIM_MP_DRAWER_TOKEN_9941",
           "expected_drawer_memory_id": "alias:verbatim_drawer_stack"
+        }
+      }
+    },
+    {
+      "id": "ret-repeated-error-suppression-surface",
+      "kind": "retrieval",
+      "category": "repeated_error_suppression",
+      "query": "MP_REPEAT_SIG_ERR RuntimeError duplicate fingerprint",
+      "mode": "debugging",
+      "active_project": null,
+      "total_tokens": 12000,
+      "expect_raw_diagnostics": true,
+      "notes": "Surfaces the errors-room drawer for this fingerprint; identical-ingest collapse to one drawer is exercised in ops case repeated_stacktrace_suppression.",
+      "expect": {
+        "memory_ids_in_top_k": ["alias:repeat_stack"],
+        "recall_k": 8,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "verbatim_substring_in_rendered": "MP_REPEAT_SIG_ERR",
+          "expected_drawer_memory_id": "alias:repeat_stack"
         }
       }
     }

@@ -82,6 +82,19 @@ def test_cli_resolve_and_unpin_roundtrip(tmp_path: Path) -> None:
     assert r2.returncode == 0
 
 
+def test_validate_argv_rewrites_to_eval(tmp_path: Path) -> None:
+    from hermes_mempalace_routing.cli import _argv_validate_alias_to_eval, build_parser
+
+    fx = _REPO / "fixtures/eval/05_sprint41_polish.json"
+    av = _argv_validate_alias_to_eval(
+        ["--base-dir", str(tmp_path), "validate", "run", "--fixtures", str(fx), "--no-matrix"]
+    )
+    assert av == ["--base-dir", str(tmp_path), "eval", "run", "--fixtures", str(fx), "--no-matrix"]
+    ns = build_parser().parse_args(av)
+    assert ns.command == "eval"
+    assert ns.eval_cmd == "run"
+
+
 def test_cli_eval_run_json(tmp_path: Path) -> None:
     fx = _REPO / "fixtures/eval/02_tokenizer.json"
     base = ["--base-dir", str(tmp_path)]

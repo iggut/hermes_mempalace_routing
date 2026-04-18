@@ -147,14 +147,15 @@ Validation does not call a remote MemPalace server. Fixtures and ops checks docu
 | `01_retrieval.json` | Hermes startup, provider debug, conflicts, design + MemPalace `expect.mempalace` blocks |
 | `02_tokenizer.json` | Tokenizer-fit smoke (`estimate` strategy for deterministic CI) |
 | `03_ops.json` | Doctor, fail-open, missing raw, route-run persistence, unpin, redaction, duplicate SHA, migration mismatch, repeated stacktrace, stats taxonomy signal, tokenizer estimate path |
-| `04_mempalace_retrieval.json` | Wing hit, room hit, verbatim drawer substring (required Sprint 4 MemPalace corpus) |
+| `04_mempalace_retrieval.json` | Wing hit, room hit, verbatim drawer, **repeated-error suppression** retrieval surface |
+| `05_sprint41_polish.json` | Strict MemPalace scope: **`wing_scope_all_selected`** + **`room_scope_all_selected`** together |
 
 **Commands**
 
 ```bash
 # From a checkout (fixtures live under ./fixtures/eval)
 hermes-mp --base-dir /tmp/mp-eval eval run --fixtures fixtures/eval
-# `validate` is an alias for `eval` (same subcommands).
+# `validate` is rewritten to `eval` before parsing (one subcommand tree; no duplicate parser drift).
 hermes-mp --base-dir /tmp/mp-eval validate run --fixtures fixtures/eval --no-matrix
 hermes-mp --base-dir /tmp/mp-eval eval tokenizer-fit --fixtures fixtures/eval --json
 hermes-mp --base-dir /tmp/mp-eval eval retrieval --fixtures fixtures/eval/01_retrieval.json

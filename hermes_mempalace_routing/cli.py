@@ -5,6 +5,8 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Sequence
+
 
 from .config import RoutingConfig
 from .conflicts import list_conflicts, resolve_conflict
@@ -40,6 +42,25 @@ def _plugin_from_args(args: argparse.Namespace) -> HermesMemPalaceRoutingPlugin:
 
 def _storage_from_args(args: argparse.Namespace):
     return create_storage(_config_from_args(args))
+
+
+_GLOBAL_FLAGS_WITH_VALUE: tuple[str, ...] = ("--base-dir", "--storage")
+
+
+def _argv_validate_alias_to_eval(argv: Sequence[str]) -> list[str]:
+    """Treat `validate` as an alias of `eval` so only one subcommand tree is defined."""
+    out = list(argv)
+    i = 0
+    while i < len(out):
+        tok = out[i]
+        if tok in _GLOBAL_FLAGS_WITH_VALUE and i + 1 < len(out):
+            i += 2
+            continue
+        if tok == "validate":
+            out[i] = "eval"
+            return out
+        return out
+    return out
 
 
 def cmd_route(args) -> int:
@@ -509,14 +530,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Legacy baseline compares against first-k envelopes by memory_id order",
     )
 
-    p_eval = sub.add_parser("eval", help="Sprint 4 validation suites (tokenizer, retrieval, ops)")
-    eval_sub = p_eval.add_subparsers(dest="eval_cmd", required=True)
-
-    p_validate = sub.add_parser(
-        "validate",
-        help="Alias for `eval` (same subcommands: run, tokenizer-fit, retrieval, ops)",
+    p_eval = sub.add_parser(
+        "eval",
+        help="Sprint 4 validation suites (tokenizer, retrieval, ops). "
+        "The top-level synonym `validate` is rewritten to `eval` before parsing (same subcommands).",
     )
-    validate_sub = p_validate.add_subparsers(dest="validate_cmd", required=True)
+    eval_sub = p_eval.add_subparsers(dest="eval_cmd", required=True)
 
     p_er = eval_sub.add_parser("run", parents=[eval_common], help="Run all case kinds + tokenizer matrix")
     p_er.set_defaults(func=cmd_eval_run)
@@ -530,23 +549,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_eo = eval_sub.add_parser("ops", parents=[eval_common], help="Operational / degraded-path cases")
     p_eo.set_defaults(func=cmd_eval_ops)
 
-    pv_run = validate_sub.add_parser("run", parents=[eval_common], help="Run all case kinds + tokenizer matrix")
-    pv_run.set_defaults(func=cmd_eval_run)
-    pv_tok = validate_sub.add_parser(
-        "tokenizer-fit", parents=[eval_common], help="Tokenizer matrix + tokenizer_fit cases"
-    )
-    pv_tok.set_defaults(func=cmd_eval_tokenizer_fit)
-    pv_ret = validate_sub.add_parser("retrieval", parents=[eval_common], help="Retrieval cases only")
-    pv_ret.set_defaults(func=cmd_eval_retrieval)
-    pv_ops = validate_sub.add_parser("ops", parents=[eval_common], help="Operational / degraded-path cases")
-    pv_ops.set_defaults(func=cmd_eval_ops)
-
     return parser
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    argv = _argv_validate_alias_to_eval(argv)
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     return args.func(args)
 
 

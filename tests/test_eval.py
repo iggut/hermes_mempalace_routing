@@ -123,6 +123,25 @@ def test_mempalace_fields_in_retrieval_report(tmp_path: Path) -> None:
         assert d["retrieval"]["mempalace_compatible_pass"] is True
 
 
+def test_sprint41_strict_scope_fixture(tmp_path: Path) -> None:
+    fx = load_fixture_file(_REPO / "fixtures/eval/05_sprint41_polish.json")
+    report = run_eval_suite(fx, tmp_path, run_matrix=False)
+    assert len(report.results) == 1
+    r = report.results[0]
+    assert r.passed
+    assert r.retrieval
+    assert r.retrieval.mempalace_checks.get("wing_scope_all_selected_ok") is True
+    assert r.retrieval.mempalace_checks.get("room_filter_ok") is True
+
+
+def test_repeated_error_retrieval_case_in_04(tmp_path: Path) -> None:
+    fx = load_fixture_file(_REPO / "fixtures/eval/04_mempalace_retrieval.json")
+    report = run_eval_suite(fx, tmp_path, run_matrix=False)
+    ids = [r.case_id for r in report.results]
+    assert "ret-repeated-error-suppression-surface" in ids
+    assert all(r.passed for r in report.results)
+
+
 def test_suite_summary_has_mempalace_rollout_keys(tmp_path: Path) -> None:
     fx = load_fixture_file(_REPO / "fixtures/eval/01_retrieval.json")
     report = run_eval_suite(fx, tmp_path, run_matrix=False)

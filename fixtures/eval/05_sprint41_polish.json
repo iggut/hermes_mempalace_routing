@@ -1,0 +1,51 @@
+{
+  "suite_id": "sprint4-1-polish",
+  "version": 1,
+  "seed": [
+    {
+      "alias": "strict_a",
+      "turn_id": "ss1",
+      "room": "project/strict_scope",
+      "fact_type": "note",
+      "summary": "strict_scope routing palette and wing notes",
+      "raw_text": "strict_scope design doc fragment one",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "strict_b",
+      "turn_id": "ss2",
+      "room": "project/strict_scope",
+      "fact_type": "note",
+      "summary": "strict_scope additional routing constraints",
+      "raw_text": "strict_scope design doc fragment two",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    }
+  ],
+  "cases": [
+    {
+      "id": "mp-strict-wing-and-room-all-selected",
+      "kind": "retrieval",
+      "category": "mempalace_strict_scope",
+      "query": "strict_scope routing palette wing notes constraints",
+      "mode": "design",
+      "active_project": "strict_scope",
+      "total_tokens": 12000,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:strict_a", "alias:strict_b"],
+        "recall_k": 8,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "expected_wing": "strict_scope",
+          "expected_room": "project/strict_scope",
+          "wing_scope_all_selected": true,
+          "room_scope_all_selected": true
+        }
+      }
+    }
+  ]
+}
