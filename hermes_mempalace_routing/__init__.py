@@ -13,6 +13,7 @@ from .models import (
     RouteRun,
     StorageStats,
 )
+from .host_hooks import HermesHostHooks
 from .plugin import HermesMemPalaceRoutingPlugin
 from .storage import (
     IndexCorruptionError,
@@ -34,6 +35,7 @@ __all__ = [
     "ConflictRecord",
     "ContextBudget",
     "DoctorReport",
+    "HermesHostHooks",
     "HermesMemPalaceRoutingPlugin",
     "IndexCorruptionError",
     "InjectedEvidence",

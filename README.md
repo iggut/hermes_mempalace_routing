@@ -50,8 +50,9 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 | `context_engine.py` | Budget, selection, render, fit |
 | `provider.py` | Deterministic ingest pipeline (validate → redact → dedupe → classify → persist → sync conflicts) |
 | `conflicts.py` | Detect/resolve/list, effective memory selection |
-| `plugin.py` | Thin Hermes facade (orchestration + fail-open boundary) |
-| `cli.py` | `hermes-mp` operator commands |
+|| `plugin.py` | Thin Hermes facade (orchestration + fail-open boundary) |
+|| `host_hooks.py` | Host-facing bridge exposing the pre-model / post-turn hook methods |
+|| `cli.py` | `hermes-mp` operator commands |
 
 ## Room model
 
