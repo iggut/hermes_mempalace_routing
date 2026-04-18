@@ -73,15 +73,36 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 pytest
-```
+### Test runner
 
-For a one-command test run that auto-creates/uses the local venv, run:
+Run the repo test suite with:
 
 ```bash
-./scripts/test.sh
+./scripts/test.sh -q
 ```
 
-## CLI (operator)
+This bootstraps `.venv/` if needed, installs the package in editable mode, and runs pytest.
+
+### Live smoke test
+
+Run a live Hermes/MemPalace sanity check with known exact-match queries:
+
+```bash
+./scripts/smoke.sh
+```
+
+This wrapper simply forwards to `scripts/live_smoke.py`.
+
+It checks the real Hermes MCP transport, runs a few targeted `hermes chat` searches, and verifies the returned wing/room pairs against expected drawers.
+
+Useful env overrides:
+
+- `HERMES_SMOKE_PROVIDER` (default: `openai-codex`)
+- `HERMES_SMOKE_MODEL` (default: `gpt-5.4`)
+- `HERMES_SMOKE_TIMEOUT` (default: `600`)
+- `HERMES_SMOKE_COMMAND` (default: `hermes`)
+
+For local parser verification without hitting the live service, point `HERMES_SMOKE_COMMAND` at a fake shim that mimics Hermes output.
 
 Global flags (place **before** the subcommand): `--base-dir PATH`, optional `--storage {sqlite,jsonl}`.
 
