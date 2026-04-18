@@ -113,7 +113,7 @@ class RouteScorer:
         weights = self._config.room_weights_for_mode(mode)
 
         if _active_project_matches_room(env.room, active_project):
-            bd["active_project"] = 0.30
+            bd["active_project"] = 0.60
             rationale.append("active_project_room")
 
         bd["pin"] = self._config.pin_boost if env.pinned else 0.0

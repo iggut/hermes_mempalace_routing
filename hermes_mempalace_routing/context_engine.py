@@ -9,7 +9,7 @@ from .models import (
     RawDiagnosticExcerpt,
     RouteCandidate,
 )
-from .routing import RouteScorer
+from .routing import RouteScorer, room_matches_active_project
 from .storage import StorageBackend
 from .tokenizer import count_tokens, truncate_to_tokens
 
@@ -95,6 +95,10 @@ class RoutingContextEngine:
         ranked, dropped = self.select_route_candidates(query, envelopes, active_project, mode, conflicts)
         by_id = {env.memory_id: env for env in envelopes}
         eligible = [c for c in ranked if c.memory_id not in dropped]
+        if active_project and mode == "design":
+            matching = [c for c in eligible if room_matches_active_project(c.room, active_project)]
+            if matching:
+                eligible = matching
         selected: list[InjectedEvidence] = []
         extra_drops = dict(dropped)
         for candidate in eligible:
