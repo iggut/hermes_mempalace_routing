@@ -56,6 +56,10 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 
 ## Tiny host integration example
 
+Use the file below if you want a copy-paste runnable sample:
+
+- `examples/host_hooks_example.py`
+
 ```python
 from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
 
