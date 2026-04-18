@@ -50,9 +50,37 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 | `context_engine.py` | Budget, selection, render, fit |
 | `provider.py` | Deterministic ingest pipeline (validate → redact → dedupe → classify → persist → sync conflicts) |
 | `conflicts.py` | Detect/resolve/list, effective memory selection |
-|| `plugin.py` | Thin Hermes facade (orchestration + fail-open boundary) |
-|| `host_hooks.py` | Host-facing bridge exposing the pre-model / post-turn hook methods |
-|| `cli.py` | `hermes-mp` operator commands |
+| `plugin.py` | Thin Hermes facade (orchestration + fail-open boundary) |
+| `host_hooks.py` | Host-facing bridge exposing the pre-model / post-turn hook methods |
+| `cli.py` | `hermes-mp` operator commands |
+
+## Tiny host integration example
+
+```python
+from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
+
+hooks = HermesHostHooks.from_config(RoutingConfig.default())
+
+# Post-turn: store the exact raw artifact first.
+hooks.post_turn_artifact_ingestion(
+    turn_id="turn-123",
+    room="project/hermes",
+    fact_type="stacktrace",
+    summary="Hermes startup failed with SyntaxError",
+    raw_text='SyntaxError: invalid syntax\n  File "run_agent.py", line 1\n',
+    route_tags=["syntaxerror", "startup"],
+)
+
+# Pre-model: build the routed context block for the next prompt.
+payload = hooks.pre_model_context_assembly(
+    query="why did Hermes startup fail?",
+    total_tokens=8000,
+    active_project="hermes",
+    mode="debugging",
+)
+
+print(payload["rendered_block"])
+```
 
 ## Room model
 
