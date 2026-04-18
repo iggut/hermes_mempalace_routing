@@ -33,6 +33,7 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 ## Fail-open behavior
 
 - When **`fail_open_to_hermes_summarization`** is enabled (default), storage/ingest failures during `record_turn_artifact` return **`None`** instead of breaking chat.
+- When **`replace_hermes_summarization`** is disabled, `build_context_for_query` returns the disabled payload so the host can keep using its legacy summarization path.
 - Routing failures in **`build_context_for_query`** return a fallback payload with **`fallback_used=True`** and a traced **`RouteRun`** when possible.
 
 ## Package layout

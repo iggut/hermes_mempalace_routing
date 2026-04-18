@@ -228,7 +228,7 @@ class HermesMemPalaceRoutingPlugin:
         mode: str = "debugging",
     ) -> dict[str, Any]:
         """Hermes pre-model hook: route-selected evidence, fail-open to summarization on error."""
-        if not self.config.enabled:
+        if not self.config.enabled or not self.config.replace_hermes_summarization:
             return self._empty_disabled_payload(query, total_tokens, active_project, mode)
         try:
             return self._build_context_inner(query, total_tokens, active_project, mode)

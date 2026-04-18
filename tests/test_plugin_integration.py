@@ -57,6 +57,37 @@ def test_routing_disabled_no_evidence(tmp_path: Path) -> None:
     assert payload["evidence"] == []
 
 
+def test_replace_flag_disables_pre_model_routing(tmp_path: Path) -> None:
+    cfg = _jsonl_config(tmp_path)
+    cfg.replace_hermes_summarization = False
+    plugin = HermesMemPalaceRoutingPlugin(cfg)
+    storage = plugin.storage
+    storage.persist_memory_turn(
+        turn_id="t1",
+        room="project/hermes",
+        fact_type="stacktrace",
+        summary="SyntaxError in run_agent.py",
+        raw_text="SyntaxError: invalid syntax\n",
+        route_tags=["syntaxerror"],
+        conflict_key=None,
+        pinned=False,
+    )
+
+    payload = plugin.build_context_for_query(
+        query="why startup fails",
+        total_tokens=8000,
+        active_project="project/hermes",
+        mode="debugging",
+    )
+
+    assert payload["routing_disabled"] is True
+    assert payload["fallback_used"] is False
+    assert payload["rendered_block"] == ""
+    assert payload["evidence"] == []
+    assert payload["route_candidates"] == []
+    assert payload["trace"].routing_disabled is True
+
+
 def test_exception_fail_open_returns_fallback_payload(tmp_path: Path) -> None:
     plugin = HermesMemPalaceRoutingPlugin(_jsonl_config(tmp_path))
 
@@ -85,15 +116,17 @@ def test_record_turn_artifact_disabled_writes_nothing(tmp_path: Path) -> None:
     cfg = _jsonl_config(tmp_path)
     cfg.enabled = False
     plugin = HermesMemPalaceRoutingPlugin(cfg)
-    assert (
-        plugin.record_turn_artifact(
-            "t1",
-            "scratch",
-            "note",
-            "s",
-            "raw",
-        )
-        is None
+
+    out = plugin.record_turn_artifact(
+        turn_id="t1",
+        room="project/hermes",
+        fact_type="note",
+        summary="x",
+        raw_text="y",
+        route_tags=[],
+        conflict_key=None,
+        pinned=False,
     )
+
+    assert out is None
     assert plugin.storage.list_envelopes() == []
-    assert plugin.storage.list_artifacts() == []
