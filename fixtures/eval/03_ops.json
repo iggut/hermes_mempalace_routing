@@ -1,0 +1,55 @@
+{
+  "suite_id": "sprint4-ops",
+  "version": 1,
+  "seed": [],
+  "cases": [
+    {
+      "id": "ops-doctor-clean",
+      "kind": "operational",
+      "category": "doctor",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "doctor_degraded" }
+    },
+    {
+      "id": "ops-fail-open-route",
+      "kind": "operational",
+      "category": "fail_open",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "fail_open_on_route_error" }
+    },
+    {
+      "id": "ops-missing-raw",
+      "kind": "operational",
+      "category": "missing_raw",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "missing_raw_file" }
+    },
+    {
+      "id": "ops-route-run-fail-open",
+      "kind": "operational",
+      "category": "persistence",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "route_run_insert_failure_fail_open" }
+    },
+    {
+      "id": "ops-unpin-sqlite",
+      "kind": "operational",
+      "category": "pins",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "unpin_immediate" }
+    },
+    {
+      "id": "ops-redaction-toggle",
+      "kind": "operational",
+      "category": "redaction",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "redaction_toggle_report" }
+    }
+  ]
+}

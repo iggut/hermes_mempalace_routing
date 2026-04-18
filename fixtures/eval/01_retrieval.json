@@ -1,0 +1,127 @@
+{
+  "suite_id": "sprint4-retrieval",
+  "version": 1,
+  "seed": [
+    {
+      "alias": "hermes_note",
+      "turn_id": "t1",
+      "room": "project/hermes",
+      "fact_type": "note",
+      "summary": "Hermes startup OOM when loading large plugin graph",
+      "raw_text": "OOMError: unable to allocate memory during plugin init",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "stack_err",
+      "turn_id": "t2",
+      "room": "errors",
+      "fact_type": "stacktrace",
+      "summary": "ImportError loading hermes.mem module",
+      "raw_text": "Traceback (most recent call last):\n  File \"main.py\", line 10\nImportError: cannot import name 'mem' from 'hermes'",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "ops_cli",
+      "turn_id": "t3",
+      "room": "ops",
+      "fact_type": "note",
+      "summary": "hermes-mp doctor reports sqlite migrations applied",
+      "raw_text": "doctor ok=1 backend=sqlite",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "dup_a",
+      "turn_id": "t4",
+      "room": "project/hermes",
+      "fact_type": "note",
+      "summary": "MemPalace uses identity ops errors decisions rooms",
+      "raw_text": "architecture: standard rooms plus project/*",
+      "route_tags": ["runtime_truth"],
+      "conflict_key": "ck_eval",
+      "pinned": false
+    },
+    {
+      "alias": "dup_b",
+      "turn_id": "t5",
+      "room": "project/hermes",
+      "fact_type": "note",
+      "summary": "MemPalace only uses scratch room",
+      "raw_text": "architecture: scratch only (obsolete)",
+      "route_tags": [],
+      "conflict_key": "ck_eval",
+      "pinned": false
+    }
+  ],
+  "cases": [
+    {
+      "id": "ret-hermes-startup",
+      "kind": "retrieval",
+      "category": "hermes_startup",
+      "query": "Why does Hermes run out of memory during startup with plugins?",
+      "mode": "debugging",
+      "active_project": "hermes",
+      "total_tokens": 12000,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:hermes_note"],
+        "expected_rooms": ["project/hermes"],
+        "recall_k": 6,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0
+      }
+    },
+    {
+      "id": "ret-traceback-diagnostics",
+      "kind": "retrieval",
+      "category": "provider_debug",
+      "query": "ImportError cannot import hermes mem traceback",
+      "mode": "debugging",
+      "active_project": null,
+      "total_tokens": 12000,
+      "expect_raw_diagnostics": true,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:stack_err"],
+        "recall_k": 6,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0
+      }
+    },
+    {
+      "id": "ret-conflict-loser",
+      "kind": "retrieval",
+      "category": "conflict_resolution",
+      "query": "MemPalace architecture palace rooms routing",
+      "mode": "debugging",
+      "active_project": "hermes",
+      "total_tokens": 12000,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:dup_a"],
+        "must_exclude_memory_ids": ["alias:dup_b"],
+        "recall_k": 8,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0
+      }
+    },
+    {
+      "id": "ret-design-architecture",
+      "kind": "retrieval",
+      "category": "design_architecture",
+      "query": "How should we structure MemPalace project rooms for Hermes?",
+      "mode": "design",
+      "active_project": "hermes",
+      "total_tokens": 12000,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:dup_a"],
+        "expected_rooms": ["project/hermes"],
+        "recall_k": 6,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0
+      }
+    }
+  ]
+}

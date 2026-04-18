@@ -75,7 +75,7 @@ pip install -e .
 pytest
 ```
 
-## CLI (Sprint 3)
+## CLI (operator)
 
 Global flags (place **before** the subcommand): `--base-dir PATH`, optional `--storage {sqlite,jsonl}`.
 
@@ -110,6 +110,51 @@ hermes-mp --base-dir ~/.hermes/mempalace-routing resolve-conflict my.key --winne
 - **`doctor`:** Nonzero exit if blocking issues (migration mismatch, missing tables, missing raw files referenced by SQLite).  
 - **`migrate`:** Applies pending SQLite migrations; prints expected vs applied versions.  
 - **`reindex`:** SQLite: scans `raw/**/*.txt` and inserts missing artifact/envelope rows; use `--apply` to write. JSONL: informational only.
+
+### Sprint 4: validation and rollout evidence
+
+Sprint 4 adds **fixture-driven validation** (not a redesign of storage or routing). It answers: prompt/token **fit**, **retrieval** quality on representative Hermes/MemPalace workflows, and **degraded-path** behavior (fail-open, doctor, redaction toggles, pins). Reports are **stable JSON** (sorted keys) suitable for CI artifacts and archival evidence.
+
+**What Sprint 4 validates**
+
+- Tokenizer / provider fit: synthetic stress blocks through `RoutingContextEngine.fit_to_token_budget`, optional **provider/model** matrix (`tokenizer_strategy=auto` uses tiktoken when installed, otherwise **estimated** tokens — the report labels **measured** vs **estimated** explicitly).
+- Retrieval: recall@k, wrong-room rate, conflict-loser leakage, optional raw-diagnostic expectations, legacy baseline comparison (non-routed “first-k summaries”).
+- Operations: isolated per-case stores under `base_dir/_eval_ops/<case_id>/` — doctor on a fresh DB, forced routing failure fail-open, missing raw file, `insert_route_run` failure fail-open (second insert succeeds), SQLite unpin, redaction policy reporting. **JSONL** remains legacy: some checks report `validation_gap` where SQLite-only features apply.
+
+**What Sprint 4 does *not* validate**
+
+- It does not prove behavior on every external LLM provider API; tokenizer paths are **tiktoken or estimate** only in this package.
+- It does not replace integration tests inside Hermes itself; it validates this library’s routing + storage contracts.
+
+**Commands**
+
+```bash
+# From a checkout (fixtures live under ./fixtures/eval)
+hermes-mp --base-dir /tmp/mp-eval eval run --fixtures fixtures/eval
+hermes-mp --base-dir /tmp/mp-eval eval tokenizer-fit --fixtures fixtures/eval --json
+hermes-mp --base-dir /tmp/mp-eval eval retrieval --fixtures fixtures/eval/01_retrieval.json
+hermes-mp --base-dir /tmp/mp-eval eval ops --fixtures fixtures/eval/03_ops.json
+
+# Automation: JSON to stdout or file; nonzero exit on failures (--strict also enforces global thresholds)
+hermes-mp --base-dir /tmp/mp-eval eval run --fixtures fixtures/eval --json --output eval-report.json --strict
+hermes-mp --base-dir /tmp/mp-eval eval retrieval --min-recall-at-k 0.8 --max-wrong-room-rate 0.25 --strict
+```
+
+**Interpreting pass/fail and go/no-go**
+
+- **Case pass:** each fixture case must pass its own expectations (recall, exclusions, fit under injection cap after the safety multiplier, operational checks).
+- **Tokenizer matrix:** all matrix cells must pass fit (no budget overage after conservative counting). If **`measurement_kind` is `estimated` everywhere**, treat tokenizer proof as **conservative / heuristic** until tiktoken (or a future tokenizer binding) is available in the environment — the report states this explicitly.
+- **Go / no-go for SQLite production (limited rollout):** require repeated clean runs of `eval run` on a dedicated `--base-dir`, `doctor` clean on the real store, and `migrate` at the expected schema version. **Do not** treat JSONL-only doctor/reindex behavior as production proof.
+
+**Recommended rollout stages**
+
+1. **Local developer:** run `eval run` from the repo after changes; archive JSON reports occasionally.
+2. **Single-user daily driver:** SQLite store under `~/.hermes/mempalace-routing`, run `eval run` before upgrades; monitor `hermes-mp doctor`, `stats`, and `route --json` for anomalies.
+3. **Wider rollout:** only after multiple clean validation runs on representative machines (Python version, optional `tiktoken` installed for measured tokenizer cells).
+
+**Post-rollout monitoring (existing CLI)**
+
+- `hermes-mp doctor`, `stats`, `route --json` for payload shape drift; `conflicts` / `resolve-conflict` when editing truth; `reindex --apply` only after understanding doctor output.
 
 ## Hermes integration (hook points)
 

@@ -1,0 +1,19 @@
+{
+  "suite_id": "sprint4-tokenizer",
+  "version": 1,
+  "seed": [],
+  "cases": [
+    {
+      "id": "tok-smoke-medium",
+      "kind": "tokenizer_fit",
+      "category": "tokenizer_matrix",
+      "query": "",
+      "mode": "debugging",
+      "active_project": null,
+      "total_tokens": 12000,
+      "evidence_size": "medium",
+      "tokenizer_strategy": "estimate",
+      "notes": "Uses estimate path so CI is deterministic without tiktoken; matrix exercises auto/tiktoken when installed."
+    }
+  ]
+}

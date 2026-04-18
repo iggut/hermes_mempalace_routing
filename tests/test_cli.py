@@ -80,3 +80,51 @@ def test_cli_resolve_and_unpin_roundtrip(tmp_path: Path) -> None:
     store.set_memory_pinned(e1.memory_id, True, "pin")
     r2 = _run(*base, "unpin", e1.memory_id, cwd=tmp_path)
     assert r2.returncode == 0
+
+
+def test_cli_eval_run_json(tmp_path: Path) -> None:
+    fx = _REPO / "fixtures/eval/02_tokenizer.json"
+    base = ["--base-dir", str(tmp_path)]
+    r = _run(
+        *base,
+        "eval",
+        "run",
+        "--fixtures",
+        str(fx),
+        "--no-matrix",
+        "--json",
+        cwd=tmp_path,
+    )
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert "results" in data
+    assert data["summary"]["cases_total"] >= 1
+
+
+def test_cli_eval_strict_failure(tmp_path: Path) -> None:
+    """Threshold failure should yield nonzero exit in --strict mode."""
+    base = ["--base-dir", str(tmp_path)]
+    r = _run(
+        *base,
+        "eval",
+        "retrieval",
+        "--fixtures",
+        str(_REPO / "fixtures/eval/01_retrieval.json"),
+        "--strict",
+        "--min-recall-at-k",
+        "1.0",
+        cwd=tmp_path,
+    )
+    assert r.returncode == 0
+    r2 = _run(
+        *base,
+        "eval",
+        "retrieval",
+        "--fixtures",
+        str(_REPO / "fixtures/eval/01_retrieval.json"),
+        "--strict",
+        "--min-recall-at-k",
+        "1.01",
+        cwd=tmp_path,
+    )
+    assert r2.returncode == 1
