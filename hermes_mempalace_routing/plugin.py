@@ -29,8 +29,8 @@ class HermesMemPalaceRoutingPlugin:
     ):
         """Persist an exact raw artifact plus a routing envelope.
 
-        TODO(Hermes): call this after user turns, assistant replies, tool output,
-        shell output, and stack traces are produced.
+        TODO(Hermes): call this from the post-turn artifact ingestion hook after user turns,
+        assistant replies, tool output, shell output, and stack traces are produced.
         """
         return self.provider.store_artifact_as_memory(
             turn_id=turn_id,
@@ -50,24 +50,42 @@ class HermesMemPalaceRoutingPlugin:
         active_project: str | None = None,
         mode: str = "debugging",
     ) -> dict:
-        """Return route-selected evidence for prompt assembly.
+        """Return route-selected evidence for prompt assembly (top routes + top raw diagnostics).
 
-        TODO(Hermes): call this before any summarization fallback. Replace generic
-        context compression for the working context path with this route-aware selection.
+        TODO(Hermes): register as pre-model context assembly hook; run before any summarization
+        fallback so generic compression does not replace this path.
         """
         envelopes = self.storage.list_envelopes()
         budget = self.context_engine.allocate_budget(total_tokens)
-        evidence = self.context_engine.select_evidence(
+        max_raw_inline = max(256, budget.raw_diagnostics * 4 // max(self.config.inject_top_k_routes, 1))
+        evidence, ranked = self.context_engine.select_evidence(
             query=query,
             envelopes=envelopes,
             active_project=active_project,
             mode=mode,
+            storage=self.storage,
             top_k=self.config.inject_top_k_routes,
+            max_raw_chars_per_evidence=max_raw_inline,
+        )
+        cited = frozenset(
+            pid for ev in evidence for pid in ev.provenance if ev.raw_excerpt
+        )
+        raw_excerpts = self.context_engine.select_raw_diagnostic_excerpts(
+            query=query,
+            envelopes=envelopes,
+            active_project=active_project,
+            mode=mode,
+            storage=self.storage,
+            top_k=self.config.inject_top_k_raw_excerpts,
+            budget=budget,
+            already_cited_artifact_ids=cited,
         )
         return {
             "budget": budget,
+            "route_candidates": ranked,
             "evidence": evidence,
-            "rendered_block": self.context_engine.render_injected_block(evidence),
+            "raw_diagnostic_excerpts": raw_excerpts,
+            "rendered_block": self.context_engine.render_injected_block(evidence, raw_excerpts),
         }
 
     @classmethod

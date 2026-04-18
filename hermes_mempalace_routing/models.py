@@ -48,11 +48,14 @@ class RouteCandidate:
 
 @dataclass(slots=True)
 class ContextBudget:
+    """Fractions: 20% live, 35% routed memory, 15% raw diagnostics, 10% reserve; remainder is unallocated."""
+
     total_tokens: int
     live_conversation: int
     routed_memory: int
     raw_diagnostics: int
     reserve: int
+    remainder: int
 
 
 @dataclass(slots=True)
@@ -62,6 +65,16 @@ class InjectedEvidence:
     summary: str
     provenance: list[str]
     raw_excerpt: str | None = None
+
+
+@dataclass(slots=True)
+class RawDiagnosticExcerpt:
+    """Exact bytes from disk; length cap applies only at prompt assembly (outbound path)."""
+
+    artifact_id: str
+    memory_id: str
+    room: str
+    text: str
 
 
 @dataclass(slots=True)

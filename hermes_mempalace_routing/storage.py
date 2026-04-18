@@ -14,6 +14,7 @@ class RoutingStorage:
         self.raw_dir = base_dir / "raw"
         self.index_dir = base_dir / "index"
         self.cache_dir = base_dir / "cache"
+        self.artifacts_jsonl = self.index_dir / "artifacts.jsonl"
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -28,7 +29,7 @@ class RoutingStorage:
         path.write_text(text, encoding="utf-8")
 
         sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        return RawArtifact(
+        raw = RawArtifact(
             artifact_id=artifact_id,
             turn_id=turn_id,
             kind=kind,
@@ -37,6 +38,8 @@ class RoutingStorage:
             size_bytes=len(text.encode("utf-8")),
             sha256=sha256,
         )
+        self._append_jsonl(self.artifacts_jsonl, raw.to_dict())
+        return raw
 
     def append_envelope(self, env: MemoryEnvelope) -> None:
         self._append_jsonl(self.index_dir / "envelopes.jsonl", env.to_dict())
@@ -72,6 +75,25 @@ class RoutingStorage:
     def list_conflicts(self) -> list[ConflictRecord]:
         rows = self.read_jsonl(self.index_dir / "conflicts.jsonl")
         return [ConflictRecord(**row) for row in rows]
+
+    def list_artifacts(self) -> list[RawArtifact]:
+        rows = self.read_jsonl(self.artifacts_jsonl)
+        return [RawArtifact(**row) for row in rows]
+
+    def get_artifact(self, artifact_id: str) -> RawArtifact | None:
+        for art in self.list_artifacts():
+            if art.artifact_id == artifact_id:
+                return art
+        return None
+
+    def read_artifact_text(self, artifact_id: str) -> str | None:
+        art = self.get_artifact(artifact_id)
+        if art is None:
+            return None
+        path = Path(art.path)
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
 
     def _append_jsonl(self, path: Path, payload: dict) -> None:
         with path.open("a", encoding="utf-8") as handle:

@@ -24,6 +24,7 @@ class MemPalaceRoutingProvider:
         route_tags = route_tags or []
         raw = self.storage.persist_raw_artifact(turn_id=turn_id, kind=fact_type, text=raw_text)
         now = datetime.now(UTC).isoformat()
+        # Raw text lives only on disk; envelopes reference artifact ids (no rewriting of raw).
         env = MemoryEnvelope(
             memory_id=f"mem_{raw.artifact_id}",
             room=room,
@@ -31,7 +32,7 @@ class MemPalaceRoutingProvider:
             fact_type=fact_type,
             summary=summary,
             provenance_artifact_ids=[raw.artifact_id],
-            provenance_excerpt=raw_text[:300] if raw_text else None,
+            provenance_excerpt=None,
             confidence=0.9 if fact_type in {"stacktrace", "shell_output", "tool_output"} else 0.7,
             pinned=pinned,
             conflict_key=conflict_key,

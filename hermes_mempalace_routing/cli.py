@@ -24,6 +24,9 @@ def cmd_route(args) -> int:
     print(f"Active project: {args.active_project or 'none'}")
     print(f"Mode: {args.mode}")
     print(f"Budget: {payload['budget']}")
+    print("Route ranking (score, rationale):")
+    for cand in payload["route_candidates"][:15]:
+        print(f"  {cand.memory_id} score={cand.score:.3f} room={cand.room} rationale={cand.rationale}")
     print(payload["rendered_block"])
     return 0
 
@@ -47,7 +50,15 @@ def cmd_inspect(args) -> int:
         print("memory not found")
         return 1
 
-    # artifact
+    # artifact: prefer artifacts index (source of truth), then envelope provenance.
+    art = plugin.storage.get_artifact(args.target_id)
+    if art is not None:
+        print(art)
+        body = plugin.storage.read_artifact_text(args.target_id)
+        if body is not None:
+            print("--- raw (exact, utf-8) ---")
+            print(body)
+        return 0
     for env in envelopes:
         if args.target_id in env.provenance_artifact_ids:
             print(env)
