@@ -75,6 +75,12 @@ pip install -e .
 pytest
 ```
 
+For a one-command test run that auto-creates/uses the local venv, run:
+
+```bash
+./scripts/test.sh
+```
+
 ## CLI (operator)
 
 Global flags (place **before** the subcommand): `--base-dir PATH`, optional `--storage {sqlite,jsonl}`.
