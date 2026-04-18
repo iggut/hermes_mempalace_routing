@@ -95,6 +95,32 @@ def test_validate_argv_rewrites_to_eval(tmp_path: Path) -> None:
     assert ns.eval_cmd == "run"
 
 
+def test_validate_argv_rewrite_with_both_globals_orderings(tmp_path: Path) -> None:
+    """Guard skip-pairs logic: both globals must be skipped before rewriting `validate`."""
+    from hermes_mempalace_routing.cli import _argv_validate_alias_to_eval, build_parser
+
+    bd = str(tmp_path)
+    fx = str(_REPO / "fixtures/eval/05_sprint41_polish.json")
+    tail = ["validate", "run", "--fixtures", fx, "--no-matrix"]
+    argv_base_first = ["--base-dir", bd, "--storage", "sqlite", *tail]
+    argv_storage_first = ["--storage", "sqlite", "--base-dir", bd, *tail]
+    exp_base_first = ["--base-dir", bd, "--storage", "sqlite", "eval", "run", "--fixtures", fx, "--no-matrix"]
+    exp_storage_first = ["--storage", "sqlite", "--base-dir", bd, "eval", "run", "--fixtures", fx, "--no-matrix"]
+
+    out1 = _argv_validate_alias_to_eval(argv_base_first)
+    out2 = _argv_validate_alias_to_eval(argv_storage_first)
+    assert out1 == exp_base_first
+    assert out2 == exp_storage_first
+
+    p = build_parser()
+    for out in (out1, out2):
+        ns = p.parse_args(out)
+        assert ns.command == "eval"
+        assert ns.eval_cmd == "run"
+        assert Path(ns.base_dir).resolve() == Path(bd).resolve()
+        assert ns.storage == "sqlite"
+
+
 def test_cli_eval_run_json(tmp_path: Path) -> None:
     fx = _REPO / "fixtures/eval/02_tokenizer.json"
     base = ["--base-dir", str(tmp_path)]
