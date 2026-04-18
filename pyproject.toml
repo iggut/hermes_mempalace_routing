@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-mempalace-routing"
+version = "0.1.0"
+description = "Starter repo for Hermes + MemPalace route-aware context assembly"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  {name = "OpenAI ChatGPT"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+hermes-mp = "hermes_mempalace_routing.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["hermes_mempalace_routing*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
