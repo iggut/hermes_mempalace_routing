@@ -9,10 +9,7 @@ from .models import MemoryEnvelope, RouteRun
 from .provider import MemPalaceRoutingProvider
 from .routing import RouteScorer
 from .storage import StorageBackend, StorageError, create_storage
-
-
-def _estimate_tokens(text: str) -> int:
-    return max(0, (len(text) + 3) // 4)
+from .tokenizer import count_tokens
 
 
 class HermesMemPalaceRoutingPlugin:
@@ -23,7 +20,7 @@ class HermesMemPalaceRoutingPlugin:
         self.config.validate()
         self.storage: StorageBackend = create_storage(self.config)
         self.provider = MemPalaceRoutingProvider(self.storage)
-        self.context_engine = RoutingContextEngine(RouteScorer())
+        self.context_engine = RoutingContextEngine(RouteScorer(self.config), self.config)
 
     def record_turn_artifact(
         self,
@@ -82,10 +79,7 @@ class HermesMemPalaceRoutingPlugin:
             routing_disabled=False,
             error=f"{type(error).__name__}: {error}",
         )
-        try:
-            self.storage.insert_route_run(trace)
-        except StorageError:
-            pass
+        self.storage.insert_route_run(trace)
         return {
             "budget": budget,
             "route_candidates": [],
@@ -106,19 +100,19 @@ class HermesMemPalaceRoutingPlugin:
         mode: str,
     ) -> dict[str, Any]:
         envelopes = self.storage.list_envelopes()
+        conflicts = self.storage.list_conflicts()
         budget = self.context_engine.allocate_budget(total_tokens)
-        max_raw_inline = max(
-            256,
-            budget.raw_diagnostics * 4 // max(self.config.inject_top_k_routes, 1),
-        )
-        evidence, ranked = self.context_engine.select_evidence(
+        max_raw_chars = max(256, self.config.max_raw_excerpt_tokens * 4)
+
+        evidence, ranked, dropped_evidence = self.context_engine.select_evidence(
             query=query,
             envelopes=envelopes,
             active_project=active_project,
             mode=mode,
             storage=self.storage,
             top_k=self.config.inject_top_k_routes,
-            max_raw_chars_per_evidence=max_raw_inline,
+            conflicts=conflicts,
+            max_raw_chars_per_evidence=max_raw_chars,
         )
         cited = frozenset(
             pid for ev in evidence for pid in ev.provenance if ev.raw_excerpt
@@ -132,17 +126,33 @@ class HermesMemPalaceRoutingPlugin:
             top_k=self.config.inject_top_k_raw_excerpts,
             budget=budget,
             already_cited_artifact_ids=cited,
+            conflicts=conflicts,
         )
         rendered = self.context_engine.render_injected_block(evidence, raw_excerpts)
-        selected_ids = [ev.memory_id for ev in evidence]
-        ranked_ids = [c.memory_id for c in ranked]
-        dropped_set = [mid for mid in ranked_ids if mid not in selected_ids]
-        dropped_reasons = {mid: "below_top_k" for mid in dropped_set}
+        max_injection_tokens = budget.routed_memory + budget.raw_diagnostics
+        fitted, budget_drops, ev_final, raw_final = self.context_engine.fit_to_token_budget(
+            rendered, evidence, raw_excerpts, max_injection_tokens
+        )
+        dropped_all = {**dropped_evidence, **budget_drops}
+        selected_ids = [e.memory_id for e in ev_final]
+        dropped_reasons = dict(dropped_all)
+        selected_set = set(selected_ids)
+        for c in ranked:
+            if c.memory_id not in selected_set and c.memory_id not in dropped_reasons:
+                dropped_reasons[c.memory_id] = "below_top_k"
+
+        tok_rendered = count_tokens(
+            fitted,
+            self.config.model_hint,
+            self.config.provider_hint,
+            strategy=self.config.tokenizer_strategy,
+        )
         token_counts = {
             "total_budget": total_tokens,
             "routed_memory_budget": budget.routed_memory,
             "raw_diag_budget": budget.raw_diagnostics,
-            "rendered_block_tokens_est": _estimate_tokens(rendered),
+            "injection_token_cap": max_injection_tokens,
+            "rendered_block_tokens_est": tok_rendered,
         }
         trace = RouteRun(
             query=query,
@@ -150,23 +160,20 @@ class HermesMemPalaceRoutingPlugin:
             active_project=active_project,
             route_candidates=ranked,
             selected_evidence_ids=selected_ids,
-            dropped_evidence_ids=dropped_set,
+            dropped_evidence_ids=list(dropped_reasons.keys()),
             dropped_reasons=dropped_reasons,
             token_counts=token_counts,
             fallback_used=False,
             routing_disabled=False,
             error=None,
         )
-        try:
-            self.storage.insert_route_run(trace)
-        except StorageError:
-            pass
+        self.storage.insert_route_run(trace)
         return {
             "budget": budget,
             "route_candidates": ranked,
-            "evidence": evidence,
-            "raw_diagnostic_excerpts": raw_excerpts,
-            "rendered_block": rendered,
+            "evidence": ev_final,
+            "raw_diagnostic_excerpts": raw_final,
+            "rendered_block": fitted,
             "trace": trace,
             "fallback_used": False,
             "routing_disabled": False,

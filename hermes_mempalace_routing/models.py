@@ -95,6 +95,7 @@ class RouteCandidate:
     memory_id: str
     score: float
     rationale: list[str] = field(default_factory=list)
+    score_breakdown: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +103,7 @@ class RouteCandidate:
             "memory_id": self.memory_id,
             "score": self.score,
             "rationale": self.rationale,
+            "score_breakdown": dict(self.score_breakdown),
         }
 
 
@@ -124,6 +126,9 @@ class InjectedEvidence:
     summary: str
     provenance: list[str]
     raw_excerpt: str | None = None
+    source_score: float = 0.0
+    confidence: float = 0.5
+    pinned: bool = False
 
 
 @dataclass(slots=True)

@@ -129,6 +129,10 @@ class SQLiteRoutingStorage:
             conn.commit()
         except Exception as exc:
             conn.rollback()
+            try:
+                Path(raw.path).unlink(missing_ok=True)
+            except OSError:
+                pass
             raise StorageWriteError(str(exc)) from exc
         finally:
             conn.close()
@@ -189,9 +193,11 @@ class SQLiteRoutingStorage:
             conn.close()
 
     def insert_route_run(self, run: RouteRun) -> int:
+        """Best-effort: failures must not affect callers (e.g. context assembly)."""
         created = datetime.now(UTC).isoformat()
-        conn = self._connect()
+        conn: sqlite3.Connection | None = None
         try:
+            conn = self._connect()
             cur = conn.execute(
                 """
                 INSERT INTO route_runs (
@@ -217,11 +223,16 @@ class SQLiteRoutingStorage:
             )
             conn.commit()
             return int(cur.lastrowid or 0)
-        except Exception as exc:
-            conn.rollback()
-            raise StorageWriteError(str(exc)) from exc
+        except Exception:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            return -1
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def _row_to_envelope(self, row: sqlite3.Row) -> MemoryEnvelope:
         try:
@@ -424,6 +435,10 @@ class SQLiteRoutingStorage:
             conn.commit()
         except Exception as exc:
             conn.rollback()
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise StorageWriteError(str(exc)) from exc
         finally:
             conn.close()

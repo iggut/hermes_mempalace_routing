@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from .config import RoutingConfig
 from .models import (
+    ConflictRecord,
     ContextBudget,
     InjectedEvidence,
     MemoryEnvelope,
@@ -9,17 +11,31 @@ from .models import (
 )
 from .routing import RouteScorer
 from .storage import StorageBackend
+from .tokenizer import count_tokens, truncate_to_tokens
 
 _DIAGNOSTIC_FACTS = frozenset({"stacktrace", "shell_output", "tool_output"})
 
-
-def _approx_chars_for_tokens(tokens: int) -> int:
-    return max(0, tokens * 4)
+EXCLUSION_BELOW_SCORE_THRESHOLD = "below_score_threshold"
+EXCLUSION_DROPPED_FOR_BUDGET = "dropped_for_budget"
+EXCLUSION_CONFLICT_UNRESOLVED = "conflict_unresolved"
+EXCLUSION_MISSING_PROVENANCE = "missing_provenance"
+EXCLUSION_REDACTION_BLOCKED = "redaction_blocked"
+EXCLUSION_ARTIFACT_UNAVAILABLE = "artifact_unavailable"
 
 
 class RoutingContextEngine:
-    def __init__(self, scorer: RouteScorer):
+    def __init__(self, scorer: RouteScorer, config: RoutingConfig | None = None):
         self.scorer = scorer
+        self._config = config or RoutingConfig.default()
+
+    def _tok(self, text: str) -> int:
+        n = count_tokens(
+            text,
+            self._config.model_hint,
+            self._config.provider_hint,
+            strategy=self._config.tokenizer_strategy,
+        )
+        return int(n * self._config.tokenizer_fallback_safety_multiplier)
 
     def allocate_budget(self, total_tokens: int) -> ContextBudget:
         live = int(total_tokens * 0.20)
@@ -37,19 +53,30 @@ class RoutingContextEngine:
             remainder=remainder,
         )
 
-    def rank_candidates(
+    def select_route_candidates(
         self,
         query: str,
         envelopes: list[MemoryEnvelope],
         active_project: str | None,
         mode: str,
-    ) -> list[RouteCandidate]:
-        scored = [
-            self.scorer.score(query=query, env=env, active_project=active_project, mode=mode)
-            for env in envelopes
+        conflicts: list[ConflictRecord],
+    ) -> tuple[list[RouteCandidate], dict[str, str]]:
+        """Rank all envelopes and record exclusion reasons for ineligible candidates."""
+        scored: list[RouteCandidate] = [
+            self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in envelopes
         ]
-        scored.sort(key=lambda item: item.score, reverse=True)
-        return scored
+        scored.sort(key=lambda c: c.score, reverse=True)
+        dropped: dict[str, str] = {}
+        thr = self._config.route_score_threshold
+        for c in scored:
+            if "missing_provenance" in c.rationale:
+                dropped[c.memory_id] = EXCLUSION_MISSING_PROVENANCE
+            elif c.score < thr:
+                if "unresolved_conflict_penalty" in c.rationale:
+                    dropped[c.memory_id] = EXCLUSION_CONFLICT_UNRESOLVED
+                else:
+                    dropped[c.memory_id] = EXCLUSION_BELOW_SCORE_THRESHOLD
+        return scored, dropped
 
     def select_evidence(
         self,
@@ -58,20 +85,27 @@ class RoutingContextEngine:
         active_project: str | None,
         mode: str,
         storage: StorageBackend,
-        top_k: int = 4,
-        max_raw_chars_per_evidence: int = 2000,
-    ) -> tuple[list[InjectedEvidence], list[RouteCandidate]]:
-        scored = self.rank_candidates(query, envelopes, active_project, mode)
+        top_k: int,
+        conflicts: list[ConflictRecord],
+        max_raw_chars_per_evidence: int,
+    ) -> tuple[list[InjectedEvidence], list[RouteCandidate], dict[str, str]]:
+        ranked, dropped = self.select_route_candidates(query, envelopes, active_project, mode, conflicts)
         by_id = {env.memory_id: env for env in envelopes}
+        eligible = [c for c in ranked if c.memory_id not in dropped]
         selected: list[InjectedEvidence] = []
-        for candidate in scored[:top_k]:
+        extra_drops = dict(dropped)
+        for candidate in eligible:
+            if len(selected) >= max(0, top_k):
+                break
             env = by_id[candidate.memory_id]
             raw_excerpt: str | None = None
             if env.fact_type in _DIAGNOSTIC_FACTS and env.provenance_artifact_ids:
                 aid = env.provenance_artifact_ids[0]
                 full = storage.read_artifact_text(aid)
-                if full is not None:
-                    raw_excerpt = full[:max_raw_chars_per_evidence]
+                if full is None:
+                    extra_drops[env.memory_id] = EXCLUSION_ARTIFACT_UNAVAILABLE
+                    continue
+                raw_excerpt = full[:max_raw_chars_per_evidence]
             selected.append(
                 InjectedEvidence(
                     memory_id=env.memory_id,
@@ -79,9 +113,12 @@ class RoutingContextEngine:
                     summary=env.summary,
                     provenance=list(env.provenance_artifact_ids),
                     raw_excerpt=raw_excerpt,
+                    source_score=candidate.score,
+                    confidence=env.confidence,
+                    pinned=env.pinned,
                 )
             )
-        return selected, scored
+        return selected, ranked, extra_drops
 
     def select_raw_diagnostic_excerpts(
         self,
@@ -90,23 +127,23 @@ class RoutingContextEngine:
         active_project: str | None,
         mode: str,
         storage: StorageBackend,
-        top_k: int = 2,
+        top_k: int,
         budget: ContextBudget | None = None,
         already_cited_artifact_ids: frozenset[str] | None = None,
+        conflicts: list[ConflictRecord] | None = None,
     ) -> list[RawDiagnosticExcerpt]:
-        """Top-K diagnostic memories by route score; exact text from artifact files (capped for prompt)."""
+        conflicts = conflicts or []
         already_cited_artifact_ids = already_cited_artifact_ids or frozenset()
         diagnostic_envs = [e for e in envelopes if e.fact_type in _DIAGNOSTIC_FACTS and e.provenance_artifact_ids]
         scored = [
-            self.scorer.score(query=query, env=env, active_project=active_project, mode=mode)
-            for env in diagnostic_envs
+            self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in diagnostic_envs
         ]
-        scored.sort(key=lambda item: item.score, reverse=True)
+        scored.sort(key=lambda c: c.score, reverse=True)
 
-        max_total_chars = 16_384
+        max_total_tokens = 4096
         if budget is not None:
-            max_total_chars = _approx_chars_for_tokens(budget.raw_diagnostics)
-        per = max(256, max_total_chars // max(top_k, 1))
+            max_total_tokens = budget.raw_diagnostics
+        per = max(64, max_total_tokens // max(top_k, 1))
 
         by_id = {env.memory_id: env for env in envelopes}
         out: list[RawDiagnosticExcerpt] = []
@@ -122,7 +159,15 @@ class RoutingContextEngine:
             full = storage.read_artifact_text(aid)
             if full is None:
                 continue
-            text = full[:per]
+            text = full
+            if self._tok(text) > per:
+                text = truncate_to_tokens(
+                    full,
+                    per,
+                    self._config.model_hint,
+                    self._config.provider_hint,
+                    strategy=self._config.tokenizer_strategy,
+                )
             out.append(
                 RawDiagnosticExcerpt(
                     artifact_id=aid,
@@ -137,7 +182,12 @@ class RoutingContextEngine:
         self,
         evidence: list[InjectedEvidence],
         raw_diagnostic_excerpts: list[RawDiagnosticExcerpt] | None = None,
+        *,
+        cap_raw_excerpt_tokens: int | None = None,
+        cap_provenance_tokens: int | None = None,
     ) -> str:
+        cap_raw = cap_raw_excerpt_tokens if cap_raw_excerpt_tokens is not None else self._config.max_raw_excerpt_tokens
+        cap_prov = cap_provenance_tokens if cap_provenance_tokens is not None else self._config.max_provenance_tokens
         lines = ["[MemPalace routed evidence]"]
         if not evidence:
             lines.append("- no routed evidence selected")
@@ -145,14 +195,27 @@ class RoutingContextEngine:
             for idx, item in enumerate(evidence, start=1):
                 lines.append(f"{idx}. room={item.room}")
                 lines.append(f"   summary={item.summary}")
-                lines.append(f"   provenance={', '.join(item.provenance)}")
+                prov = ", ".join(item.provenance)
+                if self._tok(prov) > cap_prov:
+                    prov = truncate_to_tokens(
+                        prov,
+                        cap_prov,
+                        self._config.model_hint,
+                        self._config.provider_hint,
+                        strategy=self._config.tokenizer_strategy,
+                    )
+                lines.append(f"   provenance={prov}")
                 if item.raw_excerpt:
-                    # Prompt assembly: optional truncation only on outbound path (not at storage).
-                    excerpt = item.raw_excerpt
-                    cap = 400
-                    if len(excerpt) > cap:
-                        excerpt = excerpt[:cap] + "…"
-                    lines.append(f"   raw_excerpt={excerpt}")
+                    ex = item.raw_excerpt
+                    if self._tok(ex) > cap_raw:
+                        ex = truncate_to_tokens(
+                            ex,
+                            cap_raw,
+                            self._config.model_hint,
+                            self._config.provider_hint,
+                            strategy=self._config.tokenizer_strategy,
+                        )
+                    lines.append(f"   raw_excerpt={ex}")
 
         raw_diagnostic_excerpts = raw_diagnostic_excerpts or []
         lines.append("")
@@ -165,3 +228,56 @@ class RoutingContextEngine:
                 lines.append(chunk.text)
 
         return "\n".join(lines)
+
+    def fit_to_token_budget(
+        self,
+        rendered: str,
+        evidence: list[InjectedEvidence],
+        raw_diagnostic_excerpts: list[RawDiagnosticExcerpt],
+        max_tokens: int,
+    ) -> tuple[str, dict[str, str], list[InjectedEvidence], list[RawDiagnosticExcerpt]]:
+        """
+        Enforce hard token cap with deterministic trimming: drop whole evidence items first
+        (scratch / low confidence / low score), shorten raw diagnostics, then provenance, then global truncate.
+        """
+        drops: dict[str, str] = {}
+        ev = list(evidence)
+        raw = list(raw_diagnostic_excerpts)
+
+        def total_render() -> str:
+            return self.render_injected_block(ev, raw)
+
+        if self._tok(rendered) <= max_tokens:
+            return rendered, drops, ev, raw
+
+        def removal_sort_key(item: InjectedEvidence) -> tuple[int, float, float, str]:
+            is_scratch = "scratch" in item.room.lower()
+            if is_scratch:
+                return (0, item.source_score, item.confidence, item.memory_id)
+            pin_tier = 1.0 if item.pinned else 0.0
+            return (1, pin_tier, item.confidence, item.memory_id)
+
+        guard = 0
+        while self._tok(total_render()) > max_tokens and guard < 256:
+            guard += 1
+            if ev:
+                ev_sorted = sorted(ev, key=removal_sort_key)
+                victim = ev_sorted[0]
+                ev = [e for e in ev if e.memory_id != victim.memory_id]
+                drops[victim.memory_id] = EXCLUSION_DROPPED_FOR_BUDGET
+                continue
+            if raw:
+                raw.pop()
+                continue
+            break
+
+        rendered2 = total_render()
+        if self._tok(rendered2) > max_tokens:
+            rendered2 = truncate_to_tokens(
+                rendered2,
+                max_tokens,
+                self._config.model_hint,
+                self._config.provider_hint,
+                strategy=self._config.tokenizer_strategy,
+            )
+        return rendered2, drops, ev, raw

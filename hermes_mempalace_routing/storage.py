@@ -69,7 +69,7 @@ class StorageBackend(Protocol):
 
 
 def create_storage(config: RoutingConfig) -> StorageBackend:
-    """Factory for the configured backend (SQLite default, JSONL legacy)."""
+    """Production entry point for storage (SQLite default, JSONL legacy). Prefer this over ``RoutingStorage``."""
     config.validate()
     if config.storage_backend == "sqlite":
         from .storage_sqlite import SQLiteRoutingStorage
@@ -137,7 +137,14 @@ class JsonlStorage:
             size_bytes=len(text.encode("utf-8")),
             sha256=sha256,
         )
-        self._append_jsonl(self.artifacts_jsonl, raw.to_dict())
+        try:
+            self._append_jsonl(self.artifacts_jsonl, raw.to_dict())
+        except StorageWriteError:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         return raw
 
     def persist_memory_turn(
@@ -168,9 +175,16 @@ class JsonlStorage:
             created_at=now,
             updated_at=now,
         )
-        self.append_envelope(env)
-        if pinned:
-            self.append_pin(env.memory_id, "created pinned")
+        try:
+            self.append_envelope(env)
+            if pinned:
+                self.append_pin(env.memory_id, "created pinned")
+        except StorageWriteError:
+            try:
+                Path(raw.path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         return env
 
     def append_envelope(self, env: MemoryEnvelope) -> None:
@@ -190,10 +204,14 @@ class JsonlStorage:
         self._append_jsonl(self.index_dir / "conflicts.jsonl", conflict.to_dict())
 
     def insert_route_run(self, run: RouteRun) -> int:
-        payload = run.to_dict()
-        payload["created_at"] = datetime.now(UTC).isoformat()
-        self._append_jsonl(self.route_runs_jsonl, payload)
-        return 0
+        """Best-effort: tracing must not break routing."""
+        try:
+            payload = run.to_dict()
+            payload["created_at"] = datetime.now(UTC).isoformat()
+            self._append_jsonl(self.route_runs_jsonl, payload)
+            return 0
+        except Exception:
+            return -1
 
     def read_jsonl(self, path: Path) -> list[dict]:
         if not path.exists():
