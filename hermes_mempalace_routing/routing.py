@@ -25,6 +25,11 @@ def _active_project_matches_room(room: str, active_project: str | None) -> bool:
     return rl == ap or rl.startswith(ap + "/")
 
 
+def room_matches_active_project(room: str, active_project: str | None) -> bool:
+    """MemPalace wing semantics: rooms under `project/<wing>` match the active wing (project) filter."""
+    return _active_project_matches_room(room, active_project)
+
+
 def _base_room_weight(room: str, weights: dict[str, float]) -> float:
     rl = room.lower()
     if rl.startswith("project/"):

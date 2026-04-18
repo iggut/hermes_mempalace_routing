@@ -101,6 +101,28 @@ def test_cli_eval_run_json(tmp_path: Path) -> None:
     assert data["summary"]["cases_total"] >= 1
 
 
+def test_cli_eval_run_json_mempalace_keys(tmp_path: Path) -> None:
+    fx = _REPO / "fixtures/eval/04_mempalace_retrieval.json"
+    base = ["--base-dir", str(tmp_path)]
+    r = _run(
+        *base,
+        "eval",
+        "run",
+        "--fixtures",
+        str(fx),
+        "--no-matrix",
+        "--json",
+        cwd=tmp_path,
+    )
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert data["summary"].get("mempalace_retrieval_cases", 0) >= 1
+    assert "mempalace_retrieval_passed" in data["summary"]
+    first = next(x for x in data["results"] if x["kind"] == "retrieval")
+    assert "internal_route_pass" in first["retrieval"]
+    assert "mempalace_compatible_pass" in first["retrieval"]
+
+
 def test_cli_eval_strict_failure(tmp_path: Path) -> None:
     """Threshold failure should yield nonzero exit in --strict mode."""
     base = ["--base-dir", str(tmp_path)]

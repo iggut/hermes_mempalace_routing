@@ -512,6 +512,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval = sub.add_parser("eval", help="Sprint 4 validation suites (tokenizer, retrieval, ops)")
     eval_sub = p_eval.add_subparsers(dest="eval_cmd", required=True)
 
+    p_validate = sub.add_parser(
+        "validate",
+        help="Alias for `eval` (same subcommands: run, tokenizer-fit, retrieval, ops)",
+    )
+    validate_sub = p_validate.add_subparsers(dest="validate_cmd", required=True)
+
     p_er = eval_sub.add_parser("run", parents=[eval_common], help="Run all case kinds + tokenizer matrix")
     p_er.set_defaults(func=cmd_eval_run)
 
@@ -523,6 +529,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_eo = eval_sub.add_parser("ops", parents=[eval_common], help="Operational / degraded-path cases")
     p_eo.set_defaults(func=cmd_eval_ops)
+
+    pv_run = validate_sub.add_parser("run", parents=[eval_common], help="Run all case kinds + tokenizer matrix")
+    pv_run.set_defaults(func=cmd_eval_run)
+    pv_tok = validate_sub.add_parser(
+        "tokenizer-fit", parents=[eval_common], help="Tokenizer matrix + tokenizer_fit cases"
+    )
+    pv_tok.set_defaults(func=cmd_eval_tokenizer_fit)
+    pv_ret = validate_sub.add_parser("retrieval", parents=[eval_common], help="Retrieval cases only")
+    pv_ret.set_defaults(func=cmd_eval_retrieval)
+    pv_ops = validate_sub.add_parser("ops", parents=[eval_common], help="Operational / degraded-path cases")
+    pv_ops.set_defaults(func=cmd_eval_ops)
 
     return parser
 

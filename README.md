@@ -119,18 +119,43 @@ Sprint 4 adds **fixture-driven validation** (not a redesign of storage or routin
 
 - Tokenizer / provider fit: synthetic stress blocks through `RoutingContextEngine.fit_to_token_budget`, optional **provider/model** matrix (`tokenizer_strategy=auto` uses tiktoken when installed, otherwise **estimated** tokens — the report labels **measured** vs **estimated** explicitly).
 - Retrieval: recall@k, wrong-room rate, conflict-loser leakage, optional raw-diagnostic expectations, legacy baseline comparison (non-routed “first-k summaries”).
-- Operations: isolated per-case stores under `base_dir/_eval_ops/<case_id>/` — doctor on a fresh DB, forced routing failure fail-open, missing raw file, `insert_route_run` failure fail-open (second insert succeeds), SQLite unpin, redaction policy reporting. **JSONL** remains legacy: some checks report `validation_gap` where SQLite-only features apply.
+- **MemPalace-facing checks** (in `expect.mempalace` on retrieval cases): **wing** (active project → `project/<wing>` rooms), **room** (standard or project room), **drawer** (memory id / provenance artifact ids in the injected prompt), and **verbatim** substrings that must appear in the final rendered block (not summarized-away substitution). Reports separate **internal route pass** (`internal_route_pass`) from **MemPalace-compatible retrieval pass** (`mempalace_compatible_pass`).
+- Operations: isolated per-case stores under `base_dir/_eval_ops/<case_id>/` — doctor on a fresh DB, forced routing failure fail-open, missing raw file, `insert_route_run` failure fail-open (second insert succeeds), SQLite unpin, redaction policy reporting, duplicate SHA dedupe before a second envelope, migration mismatch detection, repeated stacktrace suppression, **stats** taxonomy-style room counts, and explicit **estimate-only** tokenizer path reporting. **JSONL** remains legacy: some checks report `validation_gap` where SQLite-only features apply.
+
+**MemPalace terminology at the Hermes boundary**
+
+- **Wing:** Hermes `active_project` (e.g. `hermes`) maps to MemPalace rooms under `project/<wing>` via `project_room()` — same semantics as routing’s active-project boost.
+- **Room:** Envelope `room` (`identity`, `ops`, `errors`, `project/...`, …).
+- **Drawer:** A durable memory row plus provenance artifact ids; **verbatim content** is the raw bytes on disk (and what appears in `raw_excerpt` / diagnostic excerpts in the prompt), not the envelope summary alone.
+- **Internal Hermes terms** (`route_candidates`, `evidence`, score breakdowns) remain implementation details; eval reports still label **internal** vs **MemPalace-compatible** success.
+
+Optional strict flags in `expect.mempalace`: `wing_scope_all_selected` / `room_scope_all_selected` require **every** selected evidence room to match the wing or room (stricter than the default “expected hit” checks, which match how the Hermes scorer boosts but does not hard-filter all rooms).
+
+**MemPalace MCP / operator surface (alignment, not live network tests)**
+
+Validation does not call a remote MemPalace server. Fixtures and ops checks document alignment with **intent** of the current tool surface: `mempalace_status`, `mempalace_list_wings`, `mempalace_list_rooms`, `mempalace_get_taxonomy`, `mempalace_search`, `mempalace_check_duplicate`, `mempalace_add_drawer`, `mempalace_delete_drawer`, `mempalace_reconnect` — e.g. **duplicate** ops map to **`mempalace_check_duplicate`**-style dedupe before add; **stats** / **doctor** map to taxonomy/status-style reporting; **search** semantics are approximated by this package’s scorer + scoped rooms.
 
 **What Sprint 4 does *not* validate**
 
 - It does not prove behavior on every external LLM provider API; tokenizer paths are **tiktoken or estimate** only in this package.
 - It does not replace integration tests inside Hermes itself; it validates this library’s routing + storage contracts.
 
+**Fixture layout (`fixtures/eval/`)**
+
+| File | Role |
+|------|------|
+| `01_retrieval.json` | Hermes startup, provider debug, conflicts, design + MemPalace `expect.mempalace` blocks |
+| `02_tokenizer.json` | Tokenizer-fit smoke (`estimate` strategy for deterministic CI) |
+| `03_ops.json` | Doctor, fail-open, missing raw, route-run persistence, unpin, redaction, duplicate SHA, migration mismatch, repeated stacktrace, stats taxonomy signal, tokenizer estimate path |
+| `04_mempalace_retrieval.json` | Wing hit, room hit, verbatim drawer substring (required Sprint 4 MemPalace corpus) |
+
 **Commands**
 
 ```bash
 # From a checkout (fixtures live under ./fixtures/eval)
 hermes-mp --base-dir /tmp/mp-eval eval run --fixtures fixtures/eval
+# `validate` is an alias for `eval` (same subcommands).
+hermes-mp --base-dir /tmp/mp-eval validate run --fixtures fixtures/eval --no-matrix
 hermes-mp --base-dir /tmp/mp-eval eval tokenizer-fit --fixtures fixtures/eval --json
 hermes-mp --base-dir /tmp/mp-eval eval retrieval --fixtures fixtures/eval/01_retrieval.json
 hermes-mp --base-dir /tmp/mp-eval eval ops --fixtures fixtures/eval/03_ops.json

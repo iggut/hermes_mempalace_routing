@@ -72,7 +72,11 @@
         "expected_rooms": ["project/hermes"],
         "recall_k": 6,
         "min_recall_at_k": 1.0,
-        "max_wrong_room_rate": 1.0
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "expected_wing": "hermes",
+          "expected_drawer_memory_id": "alias:hermes_note"
+        }
       }
     },
     {
@@ -88,7 +92,10 @@
         "memory_ids_in_top_k": ["alias:stack_err"],
         "recall_k": 6,
         "min_recall_at_k": 1.0,
-        "max_wrong_room_rate": 1.0
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "verbatim_substring_in_rendered": "ImportError: cannot import name"
+        }
       }
     },
     {
@@ -104,7 +111,11 @@
         "must_exclude_memory_ids": ["alias:dup_b"],
         "recall_k": 8,
         "min_recall_at_k": 1.0,
-        "max_wrong_room_rate": 1.0
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "expected_wing": "hermes",
+          "expected_drawer_memory_id": "alias:dup_a"
+        }
       }
     },
     {
@@ -120,7 +131,11 @@
         "expected_rooms": ["project/hermes"],
         "recall_k": 6,
         "min_recall_at_k": 1.0,
-        "max_wrong_room_rate": 1.0
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "expected_wing": "hermes",
+          "expected_drawer_memory_id": "alias:dup_a"
+        }
       }
     }
   ]

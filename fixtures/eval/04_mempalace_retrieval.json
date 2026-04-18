@@ -1,0 +1,121 @@
+{
+  "suite_id": "sprint4-mempalace-retrieval",
+  "version": 1,
+  "seed": [
+    {
+      "alias": "wing_alpha_mem",
+      "turn_id": "wa1",
+      "room": "project/wing_alpha",
+      "fact_type": "note",
+      "summary": "wing alpha routing design notes for MemPalace",
+      "raw_text": "alpha wing content",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "wing_beta_mem",
+      "turn_id": "wb1",
+      "room": "project/wing_beta",
+      "fact_type": "note",
+      "summary": "beta wing unrelated experiments",
+      "raw_text": "beta only",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "room_ops_target",
+      "turn_id": "ro1",
+      "room": "ops",
+      "fact_type": "note",
+      "summary": "hermes-mp stats and doctor report sqlite migration state",
+      "raw_text": "operator: hermes-mp migrate then hermes-mp doctor",
+      "route_tags": ["cli"],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "room_scratch_noise",
+      "turn_id": "rs1",
+      "room": "scratch",
+      "fact_type": "note",
+      "summary": "scratch noise about sqlite",
+      "raw_text": "sqlite mentioned but not ops workflow",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    },
+    {
+      "alias": "verbatim_drawer_stack",
+      "turn_id": "vd1",
+      "room": "errors",
+      "fact_type": "stacktrace",
+      "summary": "crash with unique drawer token",
+      "raw_text": "Traceback (most recent call last):\n  File \"x.py\", line 1\nVERBATIM_MP_DRAWER_TOKEN_9941\nValueError: boom",
+      "route_tags": [],
+      "conflict_key": null,
+      "pinned": false
+    }
+  ],
+  "cases": [
+    {
+      "id": "mp-wing-filtered-hit",
+      "kind": "retrieval",
+      "category": "mempalace_wing",
+      "query": "MemPalace routing design notes wing alpha",
+      "mode": "design",
+      "active_project": "wing_alpha",
+      "total_tokens": 12000,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:wing_alpha_mem"],
+        "recall_k": 8,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "expected_wing": "wing_alpha",
+          "expected_drawer_memory_id": "alias:wing_alpha_mem"
+        }
+      }
+    },
+    {
+      "id": "mp-room-filtered-hit",
+      "kind": "retrieval",
+      "category": "mempalace_room",
+      "query": "hermes-mp doctor sqlite migration stats operator workflow",
+      "mode": "debugging",
+      "active_project": null,
+      "total_tokens": 12000,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:room_ops_target"],
+        "recall_k": 8,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "expected_room": "ops",
+          "expected_drawer_memory_id": "alias:room_ops_target"
+        }
+      }
+    },
+    {
+      "id": "mp-verbatim-drawer-content",
+      "kind": "retrieval",
+      "category": "mempalace_verbatim",
+      "query": "VERBATIM_MP_DRAWER_TOKEN_9941 crash traceback",
+      "mode": "debugging",
+      "active_project": null,
+      "total_tokens": 12000,
+      "expect_raw_diagnostics": true,
+      "expect": {
+        "memory_ids_in_top_k": ["alias:verbatim_drawer_stack"],
+        "recall_k": 8,
+        "min_recall_at_k": 1.0,
+        "max_wrong_room_rate": 1.0,
+        "mempalace": {
+          "verbatim_substring_in_rendered": "VERBATIM_MP_DRAWER_TOKEN_9941",
+          "expected_drawer_memory_id": "alias:verbatim_drawer_stack"
+        }
+      }
+    }
+  ]
+}

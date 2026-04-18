@@ -7,16 +7,19 @@ Reports are JSON-serializable dicts with stable key ordering at dump time (sort_
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Mapping, Sequence
 
 from .config import RoutingConfig
 from .conflicts import resolve_conflict
+from .migrations import expected_migration_versions
 from .context_engine import RoutingContextEngine
 from .models import InjectedEvidence, MemoryEnvelope, RawDiagnosticExcerpt, RouteCandidate
 from .plugin import HermesMemPalaceRoutingPlugin
-from .routing import RouteScorer
+from .provider import MemPalaceRoutingProvider
+from .routing import RouteScorer, room_matches_active_project
 from .storage import StorageBackend, UnsupportedStorageOperation, create_storage
 from .tokenizer import count_tokens, estimate_tokens_fallback
 
@@ -197,6 +200,11 @@ class RetrievalQualityResult:
     route_candidates_top_ids: list[str]
     baseline_recall_at_k: float | None
     baseline_comparison: str | None
+    # internal_route_pass: Hermes routing layer (recall/exclusions/fit/diagnostics).
+    internal_route_pass: bool = True
+    # mempalace_compatible_pass: wing/room/drawer/verbatim expectations when expect.mempalace is set.
+    mempalace_compatible_pass: bool | None = None
+    mempalace_checks: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -214,6 +222,7 @@ class OperationalCheckResult:
     details: dict[str, Any] = field(default_factory=dict)
     validation_gap: bool = False
     notes: list[str] = field(default_factory=list)
+    mempalace_signal: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -340,6 +349,93 @@ def _resolve_id_list(vals: Any, aliases: Mapping[str, str]) -> list[str]:
         else:
             out.append(s)
     return out
+
+
+def _mempalace_retrieval_checks(
+    mp: Mapping[str, Any],
+    *,
+    expect: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    aliases: Mapping[str, str],
+    rendered: str,
+    selected_ids: Sequence[str],
+    selected_rooms: Sequence[str],
+    envelope_rooms: Mapping[str, str],
+) -> tuple[dict[str, Any], bool]:
+    """Validate MemPalace-facing semantics: wing, room, drawer provenance, verbatim drawer bytes in prompt."""
+    checks: dict[str, Any] = {}
+    ok = True
+
+    wing = mp.get("expected_wing")
+    if wing is not None:
+        w = str(wing)
+        strict_all = bool(mp.get("wing_scope_all_selected"))
+        if strict_all:
+            bad = [r for r in selected_rooms if not room_matches_active_project(r, w)]
+            checks["wing_scope_all_selected_ok"] = len(bad) == 0
+            checks["wing_violation_rooms"] = bad
+            if bad:
+                ok = False
+        else:
+            hit_ids = _resolve_id_list(mp.get("wing_check_memory_ids") or expect.get("memory_ids_in_top_k") or [], aliases)
+            if mp.get("expected_drawer_memory_id"):
+                hit_ids = _resolve_id_list([mp.get("expected_drawer_memory_id")], aliases)
+            rooms_for_hits = [envelope_rooms[mid] for mid in hit_ids if mid in envelope_rooms]
+            bad_hits = [r for r in rooms_for_hits if not room_matches_active_project(r, w)]
+            checks["wing_expected_hits_under_wing"] = len(bad_hits) == 0
+            checks["wing_violation_rooms_for_expected_hits"] = bad_hits
+            if bad_hits:
+                ok = False
+
+    exp_room = mp.get("expected_room")
+    if exp_room is not None:
+        er = str(exp_room).lower().strip()
+        strict_room = bool(mp.get("room_scope_all_selected"))
+        if strict_room:
+            room_ok = bool(selected_rooms) and all(
+                str(r).lower().strip() == er or str(r).lower().strip().startswith(er + "/") for r in selected_rooms
+            )
+        else:
+            hit_ids = _resolve_id_list(mp.get("room_check_memory_ids") or expect.get("memory_ids_in_top_k") or [], aliases)
+            if mp.get("expected_drawer_memory_id"):
+                hit_ids = _resolve_id_list([mp.get("expected_drawer_memory_id")], aliases)
+            rooms_for_hits = [envelope_rooms[mid] for mid in hit_ids if mid in envelope_rooms]
+            room_ok = bool(rooms_for_hits) and all(
+                str(r).lower().strip() == er or str(r).lower().strip().startswith(er + "/") for r in rooms_for_hits
+            )
+        checks["room_filter_ok"] = room_ok
+        if not room_ok:
+            ok = False
+
+    dm = mp.get("expected_drawer_memory_id")
+    if dm is not None:
+        mid = _resolve_id_list([dm], aliases)[0]
+        checks["drawer_memory_in_selected"] = mid in selected_ids
+        if mid not in selected_ids:
+            ok = False
+
+    prov_expect = mp.get("expected_drawer_provenance_artifact_ids")
+    if prov_expect is not None:
+        expected_aids = {_resolve_id_list([x], aliases)[0] for x in prov_expect}
+        prov_union: list[str] = []
+        for e in payload.get("evidence") or []:
+            prov_union.extend(getattr(e, "provenance", []) or [])
+        for chunk in payload.get("raw_diagnostic_excerpts") or []:
+            prov_union.append(getattr(chunk, "artifact_id", "") or "")
+        seen = set(prov_union)
+        checks["drawer_provenance_ids_visible"] = sorted(expected_aids)
+        checks["drawer_provenance_ok"] = expected_aids.issubset(seen)
+        if not expected_aids.issubset(seen):
+            ok = False
+
+    verb = mp.get("verbatim_substring_in_rendered")
+    if verb is not None:
+        vs = str(verb)
+        checks["verbatim_in_rendered"] = vs in rendered
+        if vs not in rendered:
+            ok = False
+
+    return checks, ok
 
 
 def _legacy_baseline_text(envelopes: Sequence[MemoryEnvelope], k: int) -> str:
@@ -583,6 +679,22 @@ def _run_retrieval_case(
         else:
             comparison = "tie"
 
+    mp_block = ex.get("mempalace")
+    mcmp_checks: dict[str, Any] = {}
+    mcmp_ok: bool | None = None
+    if isinstance(mp_block, dict) and mp_block:
+        env_rooms = {e.memory_id: e.room for e in plugin.storage.list_envelopes()}
+        mcmp_checks, mcmp_ok = _mempalace_retrieval_checks(
+            mp_block,
+            expect=ex,
+            payload=payload,
+            aliases=aliases,
+            rendered=rendered,
+            selected_ids=selected,
+            selected_rooms=selected_rooms,
+            envelope_rooms=env_rooms,
+        )
+
     metrics = {
         "fallback_used": fallback,
         "routing_disabled": bool(payload.get("routing_disabled")),
@@ -591,7 +703,21 @@ def _run_retrieval_case(
         "injection_token_cap": max_inj,
         "rendered_after_safety_tokens": after_safety,
         "baseline_text_preview": baseline_text[:240],
+        "validated_internal_only": not (isinstance(mp_block, dict) and mp_block),
+        "exercised_mempalace_compatible_semantics": bool(mp_block),
     }
+    need_diag = case.expect_raw_diagnostics
+    pass_diag = True if need_diag is None else (raw_diag_included is True)
+    default_min_recall = 1.0 if expected_ids else 0.0
+    min_recall = float(ex.get("min_recall_at_k", default_min_recall))
+    internal_pass = (
+        not fallback
+        and recall >= min_recall
+        and wrong <= float(ex.get("max_wrong_room_rate", 1.0))
+        and not conflict_leakage
+        and pass_diag
+        and fit_pass
+    )
     res = RetrievalQualityResult(
         case_id=case.id,
         category=case.category,
@@ -605,20 +731,12 @@ def _run_retrieval_case(
         route_candidates_top_ids=[c.memory_id for c in ranked[:k]],
         baseline_recall_at_k=base_recall,
         baseline_comparison=comparison,
+        internal_route_pass=internal_pass,
+        mempalace_compatible_pass=mcmp_ok,
+        mempalace_checks=mcmp_checks,
         metrics=metrics,
     )
-    need_diag = case.expect_raw_diagnostics
-    pass_diag = True if need_diag is None else (raw_diag_included is True)
-    default_min_recall = 1.0 if expected_ids else 0.0
-    min_recall = float(ex.get("min_recall_at_k", default_min_recall))
-    passed = (
-        not fallback
-        and recall >= min_recall
-        and wrong <= float(ex.get("max_wrong_room_rate", 1.0))
-        and not conflict_leakage
-        and pass_diag
-        and fit_pass
-    )
+    passed = internal_pass if mcmp_ok is None else (internal_pass and mcmp_ok)
     return res, passed
 
 
@@ -819,6 +937,201 @@ def _run_operational_case(
             ok,
         )
 
+    if name == "duplicate_aware_filing_sha":
+        cfg = _cfg_for_eval(base_dir, storage_backend=storage_backend, overrides=config_overrides)
+        store = create_storage(cfg)
+        prov = MemPalaceRoutingProvider(store, cfg)
+        raw_body = "MP_EVAL_DUPLICATE_BODY_SHA\nsecond line identical"
+        e1 = prov.store_artifact_as_memory(
+            "dup_t1", "errors", "note", "summary a", raw_body, [], None, False, fail_open=False
+        )
+        e2 = prov.store_artifact_as_memory(
+            "dup_t2", "errors", "note", "summary b", raw_body, [], None, False, fail_open=False
+        )
+        ok = e1 is not None and e2 is not None and e1.memory_id == e2.memory_id
+        return (
+            OperationalCheckResult(
+                case_id=case.id,
+                check=name,
+                ok=ok,
+                fail_open_reported=None,
+                doctor_ok=None,
+                legacy_jsonl=legacy,
+                details={"memory_id": e1.memory_id if e1 else None, "dedupe_same_id": ok},
+                validation_gap=False,
+                notes=[
+                    "MemPalace-style duplicate check: identical drawer raw (SHA) should not create a second drawer "
+                    "envelope before add/upsert."
+                ],
+                mempalace_signal={
+                    "tool_surface": "mempalace_check_duplicate",
+                    "behavior": "second ingest returns existing memory id",
+                },
+            ),
+            ok,
+        )
+
+    if name == "migration_state_mismatch_detected":
+        if legacy:
+            return (
+                OperationalCheckResult(
+                    case_id=case.id,
+                    check=name,
+                    ok=False,
+                    fail_open_reported=None,
+                    doctor_ok=None,
+                    legacy_jsonl=True,
+                    details={},
+                    validation_gap=True,
+                    notes=["SQLite-only: schema migration mismatch detection."],
+                ),
+                True,
+            )
+        cfg = _cfg_for_eval(base_dir, storage_backend=storage_backend, overrides=config_overrides)
+        store = create_storage(cfg)
+        dbp = getattr(store, "db_path", None)
+        if not dbp:
+            return (
+                OperationalCheckResult(
+                    case_id=case.id,
+                    check=name,
+                    ok=False,
+                    fail_open_reported=None,
+                    doctor_ok=None,
+                    legacy_jsonl=legacy,
+                    details={},
+                    validation_gap=True,
+                    notes=["No db_path on storage backend."],
+                ),
+                False,
+            )
+        exp = expected_migration_versions()
+        victim = exp[-1] if exp else ""
+        conn = sqlite3.connect(str(dbp))
+        try:
+            conn.execute("DELETE FROM schema_migrations WHERE version = ?", (victim,))
+            conn.commit()
+        finally:
+            conn.close()
+        rep = store.doctor()
+        mismatch = any("migration" in i.lower() for i in rep.issues)
+        ok = not rep.ok and mismatch
+        return (
+            OperationalCheckResult(
+                case_id=case.id,
+                check=name,
+                ok=ok,
+                fail_open_reported=None,
+                doctor_ok=rep.ok,
+                legacy_jsonl=legacy,
+                details={
+                    "removed_applied_version": victim,
+                    "doctor_issues": rep.issues,
+                },
+                validation_gap=False,
+                notes=["Operator should run `hermes-mp migrate` to repair schema drift."],
+                mempalace_signal={"backend_expectation": "schema versions match expected set"},
+            ),
+            ok,
+        )
+
+    if name == "repeated_stacktrace_suppression":
+        cfg = _cfg_for_eval(base_dir, storage_backend=storage_backend, overrides=config_overrides)
+        store = create_storage(cfg)
+        prov = MemPalaceRoutingProvider(store, cfg)
+        stack = (
+            'Traceback (most recent call last):\n  File "app.py", line 9\n'
+            "ValueError: MP_EVAL_REPEAT_SIG"
+        )
+        e1 = prov.store_artifact_as_memory("rs1", "errors", "stacktrace", "err1", stack, [], None, False)
+        e2 = prov.store_artifact_as_memory("rs2", "errors", "stacktrace", "err2", stack, [], None, False)
+        ok = e1 is not None and e2 is not None and e1.memory_id == e2.memory_id
+        return (
+            OperationalCheckResult(
+                case_id=case.id,
+                check=name,
+                ok=ok,
+                fail_open_reported=None,
+                doctor_ok=None,
+                legacy_jsonl=legacy,
+                details={"same_drawer_memory": ok},
+                validation_gap=False,
+                notes=["Repeated identical diagnostic fingerprint maps to same drawer (ingest path)."],
+            ),
+            ok,
+        )
+
+    if name == "taxonomy_status_stats_signal":
+        cfg = _cfg_for_eval(base_dir, storage_backend=storage_backend, overrides=config_overrides)
+        store = create_storage(cfg)
+        store.persist_memory_turn(
+            "tax1",
+            "project/demo",
+            "note",
+            "taxonomy seed",
+            "body",
+            [],
+            None,
+            False,
+            classification_source="rule",
+            verification_status="unverified",
+            raw_redaction_status="none",
+        )
+        s = store.stats()
+        room_ok = "project/demo" in (s.rooms or {})
+        backend_ok = s.backend == "sqlite"
+        ok = backend_ok and room_ok
+        return (
+            OperationalCheckResult(
+                case_id=case.id,
+                check=name,
+                ok=ok,
+                fail_open_reported=None,
+                doctor_ok=None,
+                legacy_jsonl=legacy,
+                details={"backend": s.backend, "rooms": dict(s.rooms or {})},
+                validation_gap=False,
+                notes=[
+                    "MemPalace-style taxonomy/status: list rooms and counts (maps to mempalace_list_rooms / "
+                    "mempalace_get_taxonomy expectations at the Hermes boundary)."
+                ],
+                mempalace_signal={
+                    "tools": ["mempalace_list_wings", "mempalace_list_rooms", "mempalace_get_taxonomy", "mempalace_status"],
+                    "report_shape": "backend + per-room counts",
+                },
+            ),
+            ok,
+        )
+
+    if name == "tokenizer_unavailable_explicit":
+        cfg = _cfg_for_eval(
+            base_dir,
+            storage_backend=storage_backend,
+            overrides={**(config_overrides or {}), "tokenizer_strategy": "estimate"},
+        )
+        mk = tokenizer_measurement_kind(cfg.tokenizer_strategy)
+        ok = mk == "estimated"
+        return (
+            OperationalCheckResult(
+                case_id=case.id,
+                check=name,
+                ok=ok,
+                fail_open_reported=None,
+                doctor_ok=None,
+                legacy_jsonl=legacy,
+                details={
+                    "tokenizer_strategy": cfg.tokenizer_strategy,
+                    "measurement_kind": mk,
+                    "note": "Install tiktoken for measured-token validation in tokenizer-fit matrix.",
+                },
+                validation_gap=mk != "measured",
+                notes=[
+                    "When only estimated counts are available, treat token-fit proof as conservative.",
+                ],
+            ),
+            ok,
+        )
+
     if name == "redaction_toggle_report":
         # Informational: both configs validate; report only distinguishes policy intent.
         cfg_mask = _cfg_for_eval(
@@ -951,6 +1264,24 @@ def run_eval_suite(
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     mat_ok = all(m.fit_pass and not m.budget_overage for m in matrix) if matrix else True
+    r_with_mcmp = [r for r in results if r.kind == "retrieval" and r.retrieval and r.retrieval.mempalace_compatible_pass is not None]
+    mcmp_passed = sum(
+        1
+        for r in r_with_mcmp
+        if r.retrieval and r.retrieval.mempalace_compatible_pass
+    )
+    internal_only = [r for r in results if r.kind == "retrieval" and r.retrieval and r.retrieval.mempalace_compatible_pass is None]
+    functional_failures = sum(1 for r in results if not r.passed and not r.error)
+    validation_gaps = sum(
+        1
+        for r in results
+        if r.operational and r.operational.validation_gap
+    )
+    mcmp_gaps = sum(
+        1
+        for r in r_with_mcmp
+        if r.retrieval and r.retrieval.mempalace_compatible_pass is False
+    )
     summary = {
         "cases_total": total,
         "cases_passed": passed,
@@ -958,6 +1289,17 @@ def run_eval_suite(
         "tokenizer_matrix_total": len(matrix),
         "tokenizer_matrix_pass": mat_ok,
         "legacy_jsonl_note": "JSONL is legacy/best-effort; some ops checks report validation_gap on JSONL.",
+        "internal_route_only_cases": len(internal_only),
+        "mempalace_retrieval_cases": len(r_with_mcmp),
+        "mempalace_retrieval_passed": mcmp_passed,
+        "mempalace_compatibility_gap_cases": mcmp_gaps,
+        "functional_failure_cases": functional_failures,
+        "operational_validation_gap_cases": validation_gaps,
+        "rollout_reporting": {
+            "functional_failures": functional_failures,
+            "validation_gaps": validation_gaps,
+            "mempalace_compatibility_gaps": mcmp_gaps,
+        },
     }
     return EvalSuiteReport(
         suite_id=suite_id,
@@ -994,6 +1336,8 @@ def thresholds_pass(
                 reasons.append(f"{r.case_id}: wrong_room_rate {rr.wrong_room_rate} > {max_wrong_room_rate}")
             if require_fit and not rr.fit_pass:
                 reasons.append(f"{r.case_id}: fit_pass false")
+            if rr.mempalace_compatible_pass is False:
+                reasons.append(f"{r.case_id}: mempalace_compatible_pass false")
         if r.kind == "tokenizer_fit" and r.tokenizer:
             if require_fit and (not r.tokenizer.fit_pass or r.tokenizer.budget_overage):
                 reasons.append(f"{r.case_id}: tokenizer fit failure")
@@ -1012,6 +1356,17 @@ def human_summary(report: EvalSuiteReport) -> str:
         f"cases: {s.get('cases_passed')}/{s.get('cases_total')} passed",
         f"tokenizer_matrix: {'PASS' if s.get('tokenizer_matrix_pass') else 'FAIL'} ({s.get('tokenizer_matrix_total')} cells)",
     ]
+    if s.get("mempalace_retrieval_cases"):
+        lines.append(
+            f"mempalace-compatible retrieval: {s.get('mempalace_retrieval_passed')}/"
+            f"{s.get('mempalace_retrieval_cases')} passed (wing/room/drawer/verbatim)"
+        )
+    rr = s.get("rollout_reporting") or {}
+    if rr:
+        lines.append(
+            f"rollout signals: functional_failures={rr.get('functional_failures')} "
+            f"validation_gaps={rr.get('validation_gaps')} mempalace_gaps={rr.get('mempalace_compatibility_gaps')}"
+        )
     for r in report.results:
         if not r.passed:
             lines.append(f"  FAIL {r.case_id} ({r.kind}): {r.error or 'expectations'}")

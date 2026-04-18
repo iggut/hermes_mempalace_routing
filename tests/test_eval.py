@@ -46,6 +46,40 @@ def test_thresholds_pass_respects_failed_case() -> None:
     assert any("failed" in x for x in reasons)
 
 
+def test_thresholds_mempalace_compatible_false() -> None:
+    from hermes_mempalace_routing.eval import EvalResult, EvalSuiteReport, RetrievalQualityResult
+
+    rr = RetrievalQualityResult(
+        case_id="c",
+        category="x",
+        recall_at_k=1.0,
+        top1_correct=True,
+        wrong_room_rate=0.0,
+        conflict_leakage=False,
+        raw_diag_included=None,
+        fit_pass=True,
+        selected_count=1,
+        route_candidates_top_ids=["a"],
+        baseline_recall_at_k=None,
+        baseline_comparison=None,
+        internal_route_pass=True,
+        mempalace_compatible_pass=False,
+        mempalace_checks={"wing_scope_ok": False},
+    )
+    r = EvalSuiteReport(
+        suite_id="t",
+        version=1,
+        storage_backend="sqlite",
+        legacy_jsonl=False,
+        results=[EvalResult("c", "retrieval", True, retrieval=rr)],
+        summary={},
+        tokenizer_matrix=[],
+    )
+    ok, reasons = thresholds_pass(r, require_matrix=False, require_case_pass=False)
+    assert ok is False
+    assert any("mempalace_compatible_pass" in x for x in reasons)
+
+
 def test_tokenizer_matrix_all_fit(tmp_path: Path) -> None:
     matrix = run_tokenizer_matrix(tmp_path, storage_backend="sqlite")
     assert len(matrix) == 24
@@ -74,6 +108,28 @@ def test_baseline_comparison_shape(tmp_path: Path) -> None:
         if r.retrieval:
             assert r.retrieval.baseline_comparison in (None, "win", "tie", "loss")
             assert 0.0 <= r.retrieval.recall_at_k <= 1.0
+
+
+def test_mempalace_fields_in_retrieval_report(tmp_path: Path) -> None:
+    fx = load_fixture_file(_REPO / "fixtures/eval/04_mempalace_retrieval.json")
+    report = run_eval_suite(fx, tmp_path, run_matrix=False)
+    for r in report.results:
+        assert r.retrieval is not None
+        assert r.retrieval.internal_route_pass is True
+        assert r.retrieval.mempalace_compatible_pass is True
+        assert r.retrieval.mempalace_checks
+        d = r.to_dict()
+        assert d["retrieval"]["internal_route_pass"] is True
+        assert d["retrieval"]["mempalace_compatible_pass"] is True
+
+
+def test_suite_summary_has_mempalace_rollout_keys(tmp_path: Path) -> None:
+    fx = load_fixture_file(_REPO / "fixtures/eval/01_retrieval.json")
+    report = run_eval_suite(fx, tmp_path, run_matrix=False)
+    s = report.summary
+    assert "mempalace_retrieval_cases" in s
+    assert "rollout_reporting" in s
+    assert s["mempalace_retrieval_cases"] >= 1
 
 
 def test_wrong_room_metric_bounded(tmp_path: Path) -> None:
@@ -106,6 +162,9 @@ def test_strict_threshold_recall(tmp_path: Path) -> None:
         route_candidates_top_ids=[],
         baseline_recall_at_k=None,
         baseline_comparison=None,
+        internal_route_pass=False,
+        mempalace_compatible_pass=None,
+        mempalace_checks={},
     )
     r = EvalSuiteReport(
         suite_id="t",

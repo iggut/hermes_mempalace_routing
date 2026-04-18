@@ -50,6 +50,46 @@
       "query": "",
       "mode": "debugging",
       "ops": { "name": "redaction_toggle_report" }
+    },
+    {
+      "id": "ops-duplicate-aware-filing",
+      "kind": "operational",
+      "category": "duplicate_filing",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "duplicate_aware_filing_sha" }
+    },
+    {
+      "id": "ops-migration-mismatch",
+      "kind": "operational",
+      "category": "schema",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "migration_state_mismatch_detected" }
+    },
+    {
+      "id": "ops-repeated-stacktrace",
+      "kind": "operational",
+      "category": "repeated_error",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "repeated_stacktrace_suppression" }
+    },
+    {
+      "id": "ops-taxonomy-stats-signal",
+      "kind": "operational",
+      "category": "taxonomy_status",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "taxonomy_status_stats_signal" }
+    },
+    {
+      "id": "ops-tokenizer-estimate-only",
+      "kind": "operational",
+      "category": "tokenizer",
+      "query": "",
+      "mode": "debugging",
+      "ops": { "name": "tokenizer_unavailable_explicit" }
     }
   ]
 }
