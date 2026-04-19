@@ -150,6 +150,7 @@ For local parser verification without hitting the live service, point `HERMES_SM
 
 Global flags (place **before** the subcommand): `--base-dir PATH`, optional `--storage {sqlite,jsonl}`.
 For automation, most operator commands also accept `--json`.
+The same operator commands are also available under the `operator` namespace, e.g. `hermes-mp operator doctor`.
 
 ```bash
 # Health and schema

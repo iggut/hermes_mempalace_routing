@@ -97,6 +97,11 @@ def test_cli_doctor_and_migrate_json(tmp_path: Path) -> None:
     assert doctor_data["backend"] == "sqlite"
     assert "issues" in doctor_data
 
+    r3 = _run(*base, "operator", "doctor", "--json", cwd=tmp_path)
+    assert r3.returncode == 0
+    operator_data = json.loads(r3.stdout)
+    assert operator_data["backend"] == "sqlite"
+
 
 def test_cli_resolve_and_unpin_roundtrip(tmp_path: Path) -> None:
     from hermes_mempalace_routing.config import RoutingConfig

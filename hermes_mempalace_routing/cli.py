@@ -531,6 +531,57 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    def _add_operator_commands(sp):
+        p_inspect = sp.add_parser("inspect", help="Inspect rooms, memories, or artifacts.")
+        p_inspect.add_argument("target_type", choices=["room", "memory", "artifact"])
+        p_inspect.add_argument("target_id")
+        p_inspect.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_inspect.set_defaults(func=cmd_inspect)
+
+        p_pin = sp.add_parser("pin", help="Pin a memory so it wins retrieval.")
+        p_pin.add_argument("memory_id")
+        p_pin.add_argument("--reason", default="operator pin")
+        p_pin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_pin.set_defaults(func=cmd_pin)
+
+        p_unpin = sp.add_parser("unpin", help="Remove a pin from a memory.")
+        p_unpin.add_argument("memory_id")
+        p_unpin.add_argument("--reason", default="operator unpin")
+        p_unpin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_unpin.set_defaults(func=cmd_unpin)
+
+        p_conflicts = sp.add_parser("conflicts", help="List conflict records and their effective winners.")
+        p_conflicts.add_argument("--room")
+        p_conflicts.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_conflicts.set_defaults(func=cmd_conflicts)
+
+        p_resolve = sp.add_parser("resolve-conflict", help="Pin an explicit winner for a conflict key.")
+        p_resolve.add_argument("conflict_key")
+        p_resolve.add_argument("--winner", required=True)
+        p_resolve.add_argument("--actor", default="operator")
+        p_resolve.add_argument("--reason", default="explicit_resolution")
+        p_resolve.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_resolve.set_defaults(func=cmd_resolve_conflict)
+
+        p_doctor = sp.add_parser("doctor", help="Check database health and migration state.")
+        p_doctor.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_doctor.set_defaults(func=cmd_doctor)
+
+        p_migrate = sp.add_parser("migrate", help="Apply pending schema migrations.")
+        p_migrate.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+        p_migrate.set_defaults(func=cmd_migrate)
+
+        p_reindex = sp.add_parser("reindex", help="Rebuild index rows from raw artifacts.")
+        p_reindex.add_argument(
+            "--apply",
+            action="store_true",
+            help="Actually write rebuilt rows (default is dry-run)",
+        )
+        p_reindex.set_defaults(func=cmd_reindex)
+
+        p_stats = sp.add_parser("stats", help="Summarize storage health and counts.")
+        p_stats.set_defaults(func=cmd_stats)
+
     p_route = sub.add_parser("route", help="Build a routed context payload for a query.")
     p_route.add_argument("query")
     p_route.add_argument("--active-project")
@@ -539,55 +590,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_route.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_route.set_defaults(func=cmd_route)
 
-    p_inspect = sub.add_parser("inspect", help="Inspect rooms, memories, or artifacts.")
-    p_inspect.add_argument("target_type", choices=["room", "memory", "artifact"])
-    p_inspect.add_argument("target_id")
-    p_inspect.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_inspect.set_defaults(func=cmd_inspect)
+    _add_operator_commands(sub)
 
-    p_pin = sub.add_parser("pin", help="Pin a memory so it wins retrieval.")
-    p_pin.add_argument("memory_id")
-    p_pin.add_argument("--reason", default="operator pin")
-    p_pin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_pin.set_defaults(func=cmd_pin)
-
-    p_unpin = sub.add_parser("unpin", help="Remove a pin from a memory.")
-    p_unpin.add_argument("memory_id")
-    p_unpin.add_argument("--reason", default="operator unpin")
-    p_unpin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_unpin.set_defaults(func=cmd_unpin)
-
-    p_conflicts = sub.add_parser("conflicts", help="List conflict records and their effective winners.")
-    p_conflicts.add_argument("--room")
-    p_conflicts.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_conflicts.set_defaults(func=cmd_conflicts)
-
-    p_resolve = sub.add_parser("resolve-conflict", help="Pin an explicit winner for a conflict key.")
-    p_resolve.add_argument("conflict_key")
-    p_resolve.add_argument("--winner", required=True)
-    p_resolve.add_argument("--actor", default="operator")
-    p_resolve.add_argument("--reason", default="explicit_resolution")
-    p_resolve.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_resolve.set_defaults(func=cmd_resolve_conflict)
-
-    p_doctor = sub.add_parser("doctor", help="Check database health and migration state.")
-    p_doctor.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_doctor.set_defaults(func=cmd_doctor)
-
-    p_migrate = sub.add_parser("migrate", help="Apply pending schema migrations.")
-    p_migrate.add_argument("--json", action="store_true", help="Machine-readable JSON output")
-    p_migrate.set_defaults(func=cmd_migrate)
-
-    p_reindex = sub.add_parser("reindex", help="Rebuild index rows from raw artifacts.")
-    p_reindex.add_argument(
-        "--apply",
-        action="store_true",
-        help="Actually write rebuilt rows (default is dry-run)",
-    )
-    p_reindex.set_defaults(func=cmd_reindex)
-
-    p_stats = sub.add_parser("stats", help="Summarize storage health and counts.")
-    p_stats.set_defaults(func=cmd_stats)
+    p_operator = sub.add_parser("operator", help="Namespace for operator commands.")
+    op_sub = p_operator.add_subparsers(dest="operator_command", required=True)
+    _add_operator_commands(op_sub)
 
     eval_common = argparse.ArgumentParser(add_help=False)
     eval_common.add_argument(
