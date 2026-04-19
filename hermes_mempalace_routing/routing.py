@@ -3,9 +3,17 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from .config import RoutingConfig, project_room
+from .mempalace_scope import MEMPALACE_VERBATIM_TAG
 from .models import ConflictRecord, ConflictStatus, MemoryEnvelope, RouteCandidate, VerificationStatus
 
 _DIAGNOSTIC_FACTS = frozenset({"stacktrace", "shell_output", "tool_output"})
+
+
+def _has_effective_provenance(env: MemoryEnvelope) -> bool:
+    """Artifact ids on disk, or MemPalace drawer verbatim carried in ``provenance_excerpt``."""
+    if env.provenance_artifact_ids:
+        return True
+    return bool(env.provenance_excerpt) and MEMPALACE_VERBATIM_TAG in env.route_tags
 
 
 def _normalize_active_project(active_project: str | None) -> str | None:
@@ -88,7 +96,7 @@ class RouteScorer:
         bd: dict[str, float] = {}
         rationale: list[str] = []
 
-        if not env.provenance_artifact_ids:
+        if not _has_effective_provenance(env):
             return RouteCandidate(
                 room=env.room,
                 memory_id=env.memory_id,

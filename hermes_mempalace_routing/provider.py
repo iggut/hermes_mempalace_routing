@@ -79,6 +79,10 @@ class MemPalaceRoutingProvider:
         for c in merged:
             self.storage.append_conflict(c)
 
+    def refresh_conflicts(self) -> None:
+        """Recompute conflict records after envelope changes (e.g. MemPalace-backed rows)."""
+        self._sync_conflicts()
+
     def store_artifact_as_memory(
         self,
         turn_id: str,

@@ -1,6 +1,16 @@
 from importlib.metadata import version as _pkg_version
 
+from .builtin_memory_shim import NoOpBuiltinDurableMemory
 from .config import STANDARD_ROOMS, RoutingConfig, project_room
+from .mempalace_adapter import MemPalaceAdapter, MemPalaceAdapterError, MemPalaceDrawerHit
+from .mempalace_scope import (
+    MEMPALACE_DURABLE_TAG,
+    MEMPALACE_VERBATIM_TAG,
+    MemPalaceScope,
+    derive_mempalace_scope,
+    sanitize_drawer_content,
+    sanitize_wing_room,
+)
 from .models import (
     ConflictRecord,
     ContextBudget,
@@ -40,6 +50,13 @@ __all__ = [
     "IndexCorruptionError",
     "InjectedEvidence",
     "MemoryEnvelope",
+    "MemPalaceAdapter",
+    "MemPalaceAdapterError",
+    "MemPalaceDrawerHit",
+    "MemPalaceScope",
+    "MEMPALACE_DURABLE_TAG",
+    "MEMPALACE_VERBATIM_TAG",
+    "NoOpBuiltinDurableMemory",
     "RawArtifact",
     "RawDiagnosticExcerpt",
     "RouteCandidate",
@@ -52,6 +69,9 @@ __all__ = [
     "StorageWriteError",
     "UnsupportedStorageOperation",
     "create_storage",
+    "derive_mempalace_scope",
     "project_room",
+    "sanitize_drawer_content",
+    "sanitize_wing_room",
     "__version__",
 ]

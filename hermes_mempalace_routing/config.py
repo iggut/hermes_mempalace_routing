@@ -23,6 +23,9 @@ StorageBackendName = Literal["sqlite", "jsonl"]
 TokenizerStrategy = Literal["auto", "tiktoken", "estimate"]
 TrimPolicy = Literal["deterministic_v1"]
 RedactionPolicy = Literal["none", "mask", "drop"]
+MemoryBackendName = Literal["local", "mempalace_first"]
+WingStrategyName = Literal["active_project", "fixed"]
+RoomStrategyName = Literal["fact_type_and_project", "project_only", "fixed_decisions"]
 
 CONFLICT_PRECEDENCE_TERMS: frozenset[str] = frozenset({"runtime_truth", "pin", "newer_verified"})
 
@@ -97,6 +100,29 @@ class RoutingConfig:
     model_hint: str | None = None
     provider_hint: str | None = None
 
+    # Durable memory policy (Hermes host integrates MemPalace; routing stays local metadata + traces).
+    memory_backend: MemoryBackendName = "local"
+    """``local``: legacy local raw+envelope durable path. ``mempalace_first``: durable drawers via MemPalace."""
+    mempalace_enabled: bool = False
+    """When True and tools are wired, use :class:`~hermes_mempalace_routing.mempalace_adapter.MemPalaceAdapter`."""
+    mempalace_fail_open: bool = True
+    """If True, MemPalace errors do not abort chat (mirrors fail-open routing)."""
+    mempalace_resume_on_start: bool = True
+    """Session wake runs scoped MemPalace resume/search when hooks are used."""
+    mempalace_recall_on_every_query: bool = True
+    """Pre-model: search MemPalace for each query when ``mempalace_first`` (simplest past-fact coverage)."""
+    mempalace_duplicate_threshold: float = 0.92
+    mempalace_allow_duplicate_supersede: bool = False
+    """If False, skip add_drawer when duplicate check matches."""
+    mempalace_default_wing_strategy: WingStrategyName = "active_project"
+    mempalace_default_room_strategy: RoomStrategyName = "fact_type_and_project"
+    mempalace_include_legacy_local_envelopes: bool = False
+    """When ``mempalace_first``, include pre-migration local envelopes (can double-count with MemPalace)."""
+    mempalace_fallback_local_write: bool = False
+    """If MemPalace tools are not wired, fall back to local raw+envelope writes (avoid if preventing double durable paths)."""
+    disable_builtin_durable_memory: bool = True
+    """Host hint: Hermes built-in durable blob path should be off; routing uses this for documentation/validation only."""
+
     @classmethod
     def default(cls) -> "RoutingConfig":
         return cls(base_dir=Path(os.path.expanduser("~/.hermes/mempalace-routing")))
@@ -153,9 +179,10 @@ class RoutingConfig:
 
         # Contradictory / nonsensical combinations
         if self.redact_before_persist and not self.write_raw_artifacts:
-            raise ValueError(
-                "redact_before_persist requires write_raw_artifacts (nothing to redact otherwise)"
-            )
+            if not (self.memory_backend == "mempalace_first" and self.mempalace_enabled):
+                raise ValueError(
+                    "redact_before_persist requires write_raw_artifacts (nothing to redact otherwise)"
+                )
         if self.redaction_policy not in ("none", "mask", "drop"):
             raise ValueError(f"Unknown redaction_policy: {self.redaction_policy}")
         if self.redaction_policy != "none" and not self.redact_before_persist:
@@ -181,3 +208,18 @@ class RoutingConfig:
 
         if self.repeat_error_group_window < 0 or self.repeat_error_group_window > 1_000_000:
             raise ValueError("repeat_error_group_window must be in [0, 1000000]")
+
+        if self.memory_backend not in ("local", "mempalace_first"):
+            raise ValueError(f"Unknown memory_backend: {self.memory_backend}")
+        if self.mempalace_default_wing_strategy not in ("active_project", "fixed"):
+            raise ValueError(f"Unknown mempalace_default_wing_strategy: {self.mempalace_default_wing_strategy}")
+        if self.mempalace_default_room_strategy not in (
+            "fact_type_and_project",
+            "project_only",
+            "fixed_decisions",
+        ):
+            raise ValueError(
+                f"Unknown mempalace_default_room_strategy: {self.mempalace_default_room_strategy}"
+            )
+        if self.mempalace_duplicate_threshold < 0.0 or self.mempalace_duplicate_threshold > 1.0:
+            raise ValueError("mempalace_duplicate_threshold must be in [0, 1]")

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from .config import RoutingConfig
 from .conflicts import list_conflicts
 from .context_engine import RoutingContextEngine
+from .mempalace_adapter import MemPalaceAdapter, MemPalaceAdapterError, drawer_hits_to_memory_envelopes
+from .mempalace_ingest import durable_write_via_mempalace
+from .mempalace_scope import MEMPALACE_VERBATIM_TAG, derive_mempalace_scope
 from .models import MemoryEnvelope, RouteRun
 from .provider import MemPalaceRoutingProvider
 from .routing import RouteScorer
@@ -16,12 +20,23 @@ from .tokenizer import count_tokens
 class HermesMemPalaceRoutingPlugin:
     """Hermes integration surface: thin hooks delegate to routing and storage backends."""
 
-    def __init__(self, config: RoutingConfig | None = None):
+    def __init__(
+        self,
+        config: RoutingConfig | None = None,
+        *,
+        mempalace_tools: Mapping[str, Callable[..., Any]] | None = None,
+    ):
         self.config = config or RoutingConfig.default()
         self.config.validate()
         self.storage: StorageBackend = create_storage(self.config)
         self.provider = MemPalaceRoutingProvider(self.storage, self.config)
         self.context_engine = RoutingContextEngine(RouteScorer(self.config), self.config)
+        self._mempalace = MemPalaceAdapter(mempalace_tools)
+        self._resume_envelope_cache: list[MemoryEnvelope] = []
+
+    def bind_mempalace_tools(self, **tools: Callable[..., Any]) -> None:
+        """Inject or replace MemPalace MCP/tool callables (see :class:`MemPalaceAdapter`)."""
+        self._mempalace.bind(**tools)
 
     def record_turn_artifact(
         self,
@@ -33,9 +48,48 @@ class HermesMemPalaceRoutingPlugin:
         route_tags: list[str] | None = None,
         conflict_key: str | None = None,
         pinned: bool = False,
+        *,
+        active_project: str | None = None,
     ) -> MemoryEnvelope | None:
         """Persist a raw artifact plus envelope when enabled; otherwise no-op."""
-        if not self.config.enabled or not self.config.write_raw_artifacts:
+        if not self.config.enabled:
+            return None
+
+        if (
+            self.config.memory_backend == "mempalace_first"
+            and self.config.mempalace_enabled
+            and self._mempalace.tooling_ready()
+        ):
+            try:
+                env = durable_write_via_mempalace(
+                    storage=self.storage,
+                    config=self.config,
+                    adapter=self._mempalace,
+                    turn_id=turn_id,
+                    room=room,
+                    fact_type=fact_type,
+                    summary=summary,
+                    raw_text=raw_text,
+                    route_tags=route_tags,
+                    conflict_key=conflict_key,
+                    pinned=pinned,
+                    active_project=active_project,
+                )
+            except MemPalaceAdapterError:
+                if not self.config.mempalace_fail_open:
+                    raise
+                env = None
+            if env is not None:
+                try:
+                    self.provider.refresh_conflicts()
+                except Exception:
+                    if not self.config.mempalace_fail_open:
+                        raise
+                return env
+            if not self.config.mempalace_fallback_local_write:
+                return None
+
+        if not self.config.write_raw_artifacts:
             return None
         try:
             return self.provider.store_artifact_as_memory(
@@ -53,6 +107,138 @@ class HermesMemPalaceRoutingPlugin:
             if self.config.fail_open_to_hermes_summarization:
                 return None
             raise
+
+    def _filter_local_envelopes(self, envelopes: list[MemoryEnvelope]) -> list[MemoryEnvelope]:
+        if self.config.memory_backend != "mempalace_first":
+            return envelopes
+        if self.config.mempalace_include_legacy_local_envelopes:
+            return envelopes
+        out: list[MemoryEnvelope] = []
+        for e in envelopes:
+            if e.room == "scratch":
+                out.append(e)
+                continue
+            if e.memory_id.startswith("mem_mp_"):
+                out.append(e)
+                continue
+            if MEMPALACE_VERBATIM_TAG in e.route_tags:
+                out.append(e)
+                continue
+        return out
+
+    def _mempalace_search_envelopes(
+        self,
+        query: str,
+        active_project: str | None,
+    ) -> list[MemoryEnvelope]:
+        if not self.config.mempalace_enabled or not self._mempalace.tooling_ready():
+            return []
+        try:
+            scope = derive_mempalace_scope(
+                active_project=active_project,
+                fact_type="note",
+                room_hint=None,
+                wing_strategy=self.config.mempalace_default_wing_strategy,
+                room_strategy=self.config.mempalace_default_room_strategy,
+            )
+            hits = self._mempalace.search(
+                query,
+                wing=scope.wing,
+                room=scope.room,
+                limit=32,
+            )
+            return drawer_hits_to_memory_envelopes(hits)
+        except MemPalaceAdapterError:
+            if self.config.mempalace_fail_open:
+                return []
+            raise
+
+    def envelopes_for_routing(
+        self,
+        query: str,
+        active_project: str | None,
+    ) -> list[MemoryEnvelope]:
+        """Merge filtered local metadata envelopes with MemPalace search + resume cache."""
+        local = self._filter_local_envelopes(self.storage.list_envelopes())
+        extra: list[MemoryEnvelope] = []
+        if self.config.memory_backend == "mempalace_first" and self.config.mempalace_enabled:
+            extra.extend(self._resume_envelope_cache)
+            if self.config.mempalace_recall_on_every_query:
+                extra.extend(self._mempalace_search_envelopes(query, active_project))
+        merged = local + extra
+        seen: set[str] = set()
+        deduped: list[MemoryEnvelope] = []
+        for e in merged:
+            if e.memory_id in seen:
+                continue
+            seen.add(e.memory_id)
+            deduped.append(e)
+        return deduped
+
+    def clear_resume_cache(self) -> None:
+        self._resume_envelope_cache.clear()
+
+    def session_wake_or_resume(
+        self,
+        query: str,
+        active_project: str | None = None,
+        *,
+        task_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Session start / wake: MemPalace status + scoped resume search, cached for the next route pass.
+
+        ``task_hint`` is concatenated into the resume query when provided.
+        Fail-open: returns health diagnostics even when MemPalace is down.
+        """
+        q = query if not task_hint else f"{query}\n{task_hint}"
+        status: dict[str, Any] = {"ok": False, "error": "disabled"}
+        hits: list[MemoryEnvelope] = []
+        if not self.config.mempalace_enabled or not self._mempalace.tooling_ready():
+            return {
+                "mempalace_status": status,
+                "resume_envelopes": [],
+                "resume_error": None,
+                "routing_note": "mempalace_tools_not_wired",
+            }
+        try:
+            status = self._mempalace.status()
+        except MemPalaceAdapterError as exc:
+            status = {"ok": False, "error": str(exc)}
+        if not self.config.mempalace_resume_on_start:
+            return {"mempalace_status": status, "resume_envelopes": [], "resume_error": None}
+        try:
+            scope = derive_mempalace_scope(
+                active_project=active_project,
+                fact_type="note",
+                room_hint=None,
+                wing_strategy=self.config.mempalace_default_wing_strategy,
+                room_strategy=self.config.mempalace_default_room_strategy,
+            )
+            raw_hits = self._mempalace.resume(
+                q,
+                wing=scope.wing,
+                room=scope.room,
+                limit=24,
+            )
+            hits = drawer_hits_to_memory_envelopes(raw_hits)
+            self._resume_envelope_cache = hits
+        except MemPalaceAdapterError as exc:
+            self._resume_envelope_cache = []
+            if not self.config.mempalace_fail_open:
+                raise
+            return {
+                "mempalace_status": status,
+                "resume_envelopes": [],
+                "resume_error": str(exc),
+                "routing_note": "resume_failed_fail_open",
+            }
+        return {
+            "mempalace_status": status,
+            "resume_envelopes": hits,
+            "resume_error": None,
+            "routing_note": None,
+        }
 
     def on_routing_failure(
         self,
@@ -101,7 +287,8 @@ class HermesMemPalaceRoutingPlugin:
         active_project: str | None,
         mode: str,
     ) -> dict[str, Any]:
-        envelopes = self.storage.list_envelopes()
+        envelopes = self.envelopes_for_routing(query, active_project)
+        self.clear_resume_cache()
         conflicts = list_conflicts(
             envelopes,
             self.config,
@@ -268,6 +455,8 @@ class HermesMemPalaceRoutingPlugin:
         route_tags: list[str] | None = None,
         conflict_key: str | None = None,
         pinned: bool = False,
+        *,
+        active_project: str | None = None,
     ) -> MemoryEnvelope | None:
         """Compatibility hook for post-turn raw artifact persistence."""
         return self.record_turn_artifact(
@@ -279,6 +468,7 @@ class HermesMemPalaceRoutingPlugin:
             route_tags=route_tags,
             conflict_key=conflict_key,
             pinned=pinned,
+            active_project=active_project,
         )
 
     @classmethod

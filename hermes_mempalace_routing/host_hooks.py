@@ -35,6 +35,8 @@ class HermesHostHooks:
             setattr(host, "pre_model_context_assembly", self.pre_model_context_assembly)
         if overwrite or not hasattr(host, "post_turn_artifact_ingestion"):
             setattr(host, "post_turn_artifact_ingestion", self.post_turn_artifact_ingestion)
+        if overwrite or not hasattr(host, "session_wake_or_resume"):
+            setattr(host, "session_wake_or_resume", self.session_wake_or_resume)
         return host
 
     def pre_model_context_assembly(
@@ -62,6 +64,8 @@ class HermesHostHooks:
         route_tags: list[str] | None = None,
         conflict_key: str | None = None,
         pinned: bool = False,
+        *,
+        active_project: str | None = None,
     ) -> MemoryEnvelope | None:
         """Call the routing plugin at the post-turn artifact ingestion seam."""
         return self.plugin.post_turn_artifact_ingestion(
@@ -73,4 +77,19 @@ class HermesHostHooks:
             route_tags=route_tags,
             conflict_key=conflict_key,
             pinned=pinned,
+            active_project=active_project,
+        )
+
+    def session_wake_or_resume(
+        self,
+        query: str,
+        active_project: str | None = None,
+        *,
+        task_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """MemPalace health + scoped resume before the first routed turn (optional)."""
+        return self.plugin.session_wake_or_resume(
+            query,
+            active_project=active_project,
+            task_hint=task_hint,
         )

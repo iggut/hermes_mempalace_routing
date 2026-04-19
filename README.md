@@ -36,6 +36,18 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 - When **`replace_hermes_summarization`** is disabled, `build_context_for_query` returns the disabled payload so the host can keep using its legacy summarization path.
 - Routing failures in **`build_context_for_query`** return a fallback payload with **`fallback_used=True`** and a traced **`RouteRun`** when possible.
 
+## MemPalace-first durable memory (host integration)
+
+When **`memory_backend="mempalace_first"`** and **`mempalace_enabled=True`**, durable recall/write uses the MemPalace tool surface injected into **`HermesMemPalaceRoutingPlugin(..., mempalace_tools={...})`**:
+
+- **Wing / room / drawer:** `derive_mempalace_scope()` maps Hermes `active_project` and `room` to MemPalace wing/room; drawers are **`mempalace_add_drawer`** results; verbatim bytes live in MemPalace, while SQLite holds a thin **`MemoryEnvelope`** row (`mem_mp_<drawer_id>`) with **`mempalace_verbatim`** on `route_tags` and verbatim text in **`provenance_excerpt`** for routing.
+- **Recall:** `build_context_for_query` merges MemPalace **`mempalace_search`** hits (and optional **`session_wake_or_resume`** / resume cache) with **transient** local rows (e.g. **`scratch`**) and routes them through the existing scorer + budget fitter. Legacy local durable rows are **excluded** unless **`mempalace_include_legacy_local_envelopes=True`**.
+- **Write:** post-turn **`record_turn_artifact`** → sanitize → optional redact → **`mempalace_check_duplicate`** → **`mempalace_add_drawer`** (no local raw file when **`write_raw_artifacts=False`**). Duplicates skip **`add_drawer`** unless **`mempalace_allow_duplicate_supersede=True`**.
+- **Fail-open:** MemPalace errors return empty search or **`None`** from ingest when **`mempalace_fail_open=True`** (default); chat continues.
+- **Hermes built-in durable API:** use **`NoOpBuiltinDurableMemory`** in the host to disable parallel Hermes long-term blobs while keeping session/transient buffers in Hermes.
+
+Key **`RoutingConfig`** fields: `memory_backend`, `mempalace_enabled`, `mempalace_fail_open`, `mempalace_resume_on_start`, `mempalace_recall_on_every_query`, `mempalace_duplicate_threshold`, `mempalace_default_wing_strategy`, `mempalace_default_room_strategy`, `mempalace_fallback_local_write`, `disable_builtin_durable_memory`.
+
 ## Package layout
 
 | Module | Role |
@@ -51,7 +63,11 @@ MemPalace-aware routing layer for Hermes: store raw artifacts exactly, index wit
 | `provider.py` | Deterministic ingest pipeline (validate → redact → dedupe → classify → persist → sync conflicts) |
 | `conflicts.py` | Detect/resolve/list, effective memory selection |
 | `plugin.py` | Thin Hermes facade (orchestration + fail-open boundary) |
-| `host_hooks.py` | Host-facing bridge exposing the pre-model / post-turn hook methods |
+| `host_hooks.py` | Host-facing bridge: pre-model, post-turn, session wake/resume |
+| `mempalace_adapter.py` | Thin MemPalace MCP/tool wrappers (`mempalace_search`, `mempalace_add_drawer`, …) |
+| `mempalace_scope.py` | `derive_mempalace_scope`, wing/room/content sanitizers |
+| `mempalace_ingest.py` | MemPalace durable write path (duplicate check → add_drawer → envelope row) |
+| `builtin_memory_shim.py` | `NoOpBuiltinDurableMemory` for disabling Hermes built-in durable APIs |
 | `cli.py` | `hermes-mp` operator commands |
 
 ## Tiny host integration example

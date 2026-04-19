@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .config import RoutingConfig
+from .mempalace_scope import MEMPALACE_VERBATIM_TAG
 from .models import (
     ConflictRecord,
     ContextBudget,
@@ -106,7 +107,9 @@ class RoutingContextEngine:
                 break
             env = by_id[candidate.memory_id]
             raw_excerpt: str | None = None
-            if env.fact_type in _DIAGNOSTIC_FACTS and env.provenance_artifact_ids:
+            if MEMPALACE_VERBATIM_TAG in env.route_tags and env.provenance_excerpt:
+                raw_excerpt = env.provenance_excerpt[:max_raw_chars_per_evidence]
+            elif env.fact_type in _DIAGNOSTIC_FACTS and env.provenance_artifact_ids:
                 aid = env.provenance_artifact_ids[0]
                 full = storage.read_artifact_text(aid)
                 if full is None:
@@ -141,7 +144,12 @@ class RoutingContextEngine:
     ) -> list[RawDiagnosticExcerpt]:
         conflicts = conflicts or []
         already_cited_artifact_ids = already_cited_artifact_ids or frozenset()
-        diagnostic_envs = [e for e in envelopes if e.fact_type in _DIAGNOSTIC_FACTS and e.provenance_artifact_ids]
+        diagnostic_envs = [
+            e
+            for e in envelopes
+            if e.fact_type in _DIAGNOSTIC_FACTS
+            and (e.provenance_artifact_ids or (MEMPALACE_VERBATIM_TAG in e.route_tags and e.provenance_excerpt))
+        ]
         scored = [
             self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in diagnostic_envs
         ]
@@ -159,11 +167,17 @@ class RoutingContextEngine:
             if len(out) >= top_k:
                 break
             env = by_id[cand.memory_id]
-            aid = env.provenance_artifact_ids[0]
+            if MEMPALACE_VERBATIM_TAG in env.route_tags and env.provenance_excerpt:
+                aid = f"mempalace:{env.memory_id}"
+                full = env.provenance_excerpt
+            else:
+                if not env.provenance_artifact_ids:
+                    continue
+                aid = env.provenance_artifact_ids[0]
+                full = storage.read_artifact_text(aid)
             if aid in already_cited_artifact_ids or aid in seen_art:
                 continue
             seen_art.add(aid)
-            full = storage.read_artifact_text(aid)
             if full is None:
                 continue
             text = full
