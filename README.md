@@ -149,6 +149,7 @@ Useful env overrides:
 For local parser verification without hitting the live service, point `HERMES_SMOKE_COMMAND` at a fake shim that mimics Hermes output.
 
 Global flags (place **before** the subcommand): `--base-dir PATH`, optional `--storage {sqlite,jsonl}`.
+For automation, most operator commands also accept `--json`.
 
 ```bash
 # Health and schema

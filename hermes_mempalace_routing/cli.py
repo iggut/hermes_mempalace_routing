@@ -44,6 +44,10 @@ def _storage_from_args(args: argparse.Namespace):
     return create_storage(_config_from_args(args))
 
 
+def _print_json(payload: object) -> None:
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
 _GLOBAL_FLAGS_WITH_VALUE: tuple[str, ...] = ("--base-dir", "--storage")
 
 
@@ -111,6 +115,16 @@ def cmd_inspect(args) -> int:
 
     if args.target_type == "room":
         matches = [env for env in envelopes if env.room == args.target_id]
+        if getattr(args, "json", False):
+            _print_json(
+                {
+                    "found": bool(matches),
+                    "matches": [env.to_dict() for env in matches],
+                    "target_id": args.target_id,
+                    "target_type": args.target_type,
+                }
+            )
+            return 0
         print(f"Room: {args.target_id}")
         for env in matches:
             print(f"- {env.memory_id}: {env.summary}")
@@ -119,13 +133,44 @@ def cmd_inspect(args) -> int:
     if args.target_type == "memory":
         for env in envelopes:
             if env.memory_id == args.target_id:
+                if getattr(args, "json", False):
+                    _print_json(
+                        {
+                            "found": True,
+                            "match": env.to_dict(),
+                            "target_id": args.target_id,
+                            "target_type": args.target_type,
+                        }
+                    )
+                    return 0
                 print(env)
                 return 0
+        if getattr(args, "json", False):
+            _print_json(
+                {
+                    "found": False,
+                    "target_id": args.target_id,
+                    "target_type": args.target_type,
+                }
+            )
+            return 1
         print("memory not found")
         return 1
 
     art = plugin.storage.get_artifact(args.target_id)
     if art is not None:
+        if getattr(args, "json", False):
+            body = plugin.storage.read_artifact_text(args.target_id)
+            _print_json(
+                {
+                    "artifact": art.to_dict(),
+                    "found": True,
+                    "raw_text": body,
+                    "target_id": args.target_id,
+                    "target_type": args.target_type,
+                }
+            )
+            return 0
         print(art)
         body = plugin.storage.read_artifact_text(args.target_id)
         if body is not None:
@@ -134,8 +179,27 @@ def cmd_inspect(args) -> int:
         return 0
     for env in envelopes:
         if args.target_id in env.provenance_artifact_ids:
+            if getattr(args, "json", False):
+                _print_json(
+                    {
+                        "found": True,
+                        "match": env.to_dict(),
+                        "target_id": args.target_id,
+                        "target_type": args.target_type,
+                    }
+                )
+                return 0
             print(env)
             return 0
+    if getattr(args, "json", False):
+        _print_json(
+            {
+                "found": False,
+                "target_id": args.target_id,
+                "target_type": args.target_type,
+            }
+        )
+        return 1
     print("artifact not found")
     return 1
 
@@ -143,6 +207,9 @@ def cmd_inspect(args) -> int:
 def cmd_pin(args) -> int:
     plugin = _plugin_from_args(args)
     plugin.storage.append_pin(args.memory_id, args.reason)
+    if getattr(args, "json", False):
+        _print_json({"memory_id": args.memory_id, "reason": args.reason, "status": "pinned"})
+        return 0
     print(f"Pinned {args.memory_id}: {args.reason}")
     return 0
 
@@ -154,6 +221,9 @@ def cmd_unpin(args) -> int:
     except UnsupportedStorageOperation as exc:
         print(str(exc))
         return 2
+    if getattr(args, "json", False):
+        _print_json({"memory_id": args.memory_id, "reason": args.reason, "status": "unpinned"})
+        return 0
     print(f"Unpinned {args.memory_id}")
     return 0
 
@@ -166,7 +236,13 @@ def cmd_conflicts(args) -> int:
     cfg = plugin.config
     merged = list_conflicts(envelopes, cfg, stored=plugin.storage.list_conflicts())
     if not merged:
+        if getattr(args, "json", False):
+            _print_json({"conflicts": [], "found": False, "room": args.room})
+            return 0
         print("No conflicts detected")
+        return 0
+    if getattr(args, "json", False):
+        _print_json({"conflicts": [conflict.to_dict() for conflict in merged], "found": True, "room": args.room})
         return 0
     for conflict in merged:
         eff = conflict.resolved_memory_id or "(none)"
@@ -189,6 +265,9 @@ def cmd_resolve_conflict(args) -> int:
         envelopes=envs,
     )
     plugin.storage.append_conflict(rec)
+    if getattr(args, "json", False):
+        _print_json({"conflict": rec.to_dict(), "winner": args.winner})
+        return 0
     print(f"Resolved {args.conflict_key} -> {args.winner} ({rec.status})")
     return 0
 
@@ -196,6 +275,9 @@ def cmd_resolve_conflict(args) -> int:
 def cmd_doctor(args) -> int:
     store = _storage_from_args(args)
     report = store.doctor()
+    if getattr(args, "json", False):
+        _print_json(asdict(report))
+        return 0 if report.ok else 1
     for line in report.summary_lines():
         print(line)
     return 0 if report.ok else 1
@@ -208,6 +290,9 @@ def cmd_migrate(args) -> int:
     except UnsupportedStorageOperation as exc:
         print(str(exc))
         return 2
+    if getattr(args, "json", False):
+        _print_json({"applied_migrations": after, "expected_migrations": before})
+        return 0
     print(f"expected_migrations={before}")
     print(f"applied_migrations={after}")
     return 0
@@ -433,7 +518,10 @@ def cmd_eval_ops(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hermes-mp")
+    parser = argparse.ArgumentParser(
+        prog="hermes-mp",
+        description="Hermes MemPalace operator CLI for routing, inspection, and storage maintenance.",
+    )
     parser.add_argument("--base-dir", default=str(RoutingConfig.default().base_dir))
     parser.add_argument(
         "--storage",
@@ -443,7 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_route = sub.add_parser("route")
+    p_route = sub.add_parser("route", help="Build a routed context payload for a query.")
     p_route.add_argument("query")
     p_route.add_argument("--active-project")
     p_route.add_argument("--mode", choices=["debugging", "design"], default="debugging")
@@ -451,39 +539,46 @@ def build_parser() -> argparse.ArgumentParser:
     p_route.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_route.set_defaults(func=cmd_route)
 
-    p_inspect = sub.add_parser("inspect")
+    p_inspect = sub.add_parser("inspect", help="Inspect rooms, memories, or artifacts.")
     p_inspect.add_argument("target_type", choices=["room", "memory", "artifact"])
     p_inspect.add_argument("target_id")
+    p_inspect.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_inspect.set_defaults(func=cmd_inspect)
 
-    p_pin = sub.add_parser("pin")
+    p_pin = sub.add_parser("pin", help="Pin a memory so it wins retrieval.")
     p_pin.add_argument("memory_id")
     p_pin.add_argument("--reason", default="operator pin")
+    p_pin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_pin.set_defaults(func=cmd_pin)
 
-    p_unpin = sub.add_parser("unpin")
+    p_unpin = sub.add_parser("unpin", help="Remove a pin from a memory.")
     p_unpin.add_argument("memory_id")
     p_unpin.add_argument("--reason", default="operator unpin")
+    p_unpin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_unpin.set_defaults(func=cmd_unpin)
 
-    p_conflicts = sub.add_parser("conflicts")
+    p_conflicts = sub.add_parser("conflicts", help="List conflict records and their effective winners.")
     p_conflicts.add_argument("--room")
+    p_conflicts.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_conflicts.set_defaults(func=cmd_conflicts)
 
-    p_resolve = sub.add_parser("resolve-conflict")
+    p_resolve = sub.add_parser("resolve-conflict", help="Pin an explicit winner for a conflict key.")
     p_resolve.add_argument("conflict_key")
     p_resolve.add_argument("--winner", required=True)
     p_resolve.add_argument("--actor", default="operator")
     p_resolve.add_argument("--reason", default="explicit_resolution")
+    p_resolve.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_resolve.set_defaults(func=cmd_resolve_conflict)
 
-    p_doctor = sub.add_parser("doctor")
+    p_doctor = sub.add_parser("doctor", help="Check database health and migration state.")
+    p_doctor.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_doctor.set_defaults(func=cmd_doctor)
 
-    p_migrate = sub.add_parser("migrate")
+    p_migrate = sub.add_parser("migrate", help="Apply pending schema migrations.")
+    p_migrate.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     p_migrate.set_defaults(func=cmd_migrate)
 
-    p_reindex = sub.add_parser("reindex")
+    p_reindex = sub.add_parser("reindex", help="Rebuild index rows from raw artifacts.")
     p_reindex.add_argument(
         "--apply",
         action="store_true",
@@ -491,7 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_reindex.set_defaults(func=cmd_reindex)
 
-    p_stats = sub.add_parser("stats")
+    p_stats = sub.add_parser("stats", help="Summarize storage health and counts.")
     p_stats.set_defaults(func=cmd_stats)
 
     eval_common = argparse.ArgumentParser(add_help=False)

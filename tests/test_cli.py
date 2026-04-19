@@ -49,6 +49,55 @@ def test_cli_route_json(tmp_path: Path) -> None:
     assert "route_candidates" in payload
 
 
+def test_cli_inspect_and_conflicts_json(tmp_path: Path) -> None:
+    from hermes_mempalace_routing.config import RoutingConfig
+    from hermes_mempalace_routing.storage_sqlite import SQLiteRoutingStorage
+
+    cfg = RoutingConfig(base_dir=tmp_path, storage_backend="sqlite")
+    store = SQLiteRoutingStorage(cfg)
+    e1 = store.persist_memory_turn(
+        "t1", "project/x", "note", "a", "rawa", [], "ck", False,
+        classification_source="rule",
+        verification_status="unverified",
+        raw_redaction_status="none",
+    )
+    store.persist_memory_turn(
+        "t2", "project/x", "note", "b", "rawb", [], "ck", False,
+        classification_source="rule",
+        verification_status="unverified",
+        raw_redaction_status="none",
+    )
+
+    base = ["--base-dir", str(tmp_path)]
+    r = _run(*base, "inspect", "memory", e1.memory_id, "--json", cwd=tmp_path)
+    assert r.returncode == 0
+    inspect_data = json.loads(r.stdout)
+    assert inspect_data["found"] is True
+    assert inspect_data["match"]["memory_id"] == e1.memory_id
+
+    r2 = _run(*base, "conflicts", "--json", cwd=tmp_path)
+    assert r2.returncode == 0
+    conflict_data = json.loads(r2.stdout)
+    assert conflict_data["found"] is True
+    assert conflict_data["conflicts"]
+    assert conflict_data["conflicts"][0]["conflict_key"] == "ck"
+
+
+def test_cli_doctor_and_migrate_json(tmp_path: Path) -> None:
+    base = ["--base-dir", str(tmp_path)]
+    r = _run(*base, "migrate", "--json", cwd=tmp_path)
+    assert r.returncode == 0
+    migrate_data = json.loads(r.stdout)
+    assert "applied_migrations" in migrate_data
+    assert "expected_migrations" in migrate_data
+
+    r2 = _run(*base, "doctor", "--json", cwd=tmp_path)
+    assert r2.returncode == 0
+    doctor_data = json.loads(r2.stdout)
+    assert doctor_data["backend"] == "sqlite"
+    assert "issues" in doctor_data
+
+
 def test_cli_resolve_and_unpin_roundtrip(tmp_path: Path) -> None:
     from hermes_mempalace_routing.config import RoutingConfig
     from hermes_mempalace_routing.storage_sqlite import SQLiteRoutingStorage
@@ -61,7 +110,7 @@ def test_cli_resolve_and_unpin_roundtrip(tmp_path: Path) -> None:
         verification_status="unverified",
         raw_redaction_status="none",
     )
-    e2 = store.persist_memory_turn(
+    store.persist_memory_turn(
         "t2", "project/x", "note", "b", "rawb", [], "ck", False,
         classification_source="rule",
         verification_status="unverified",
