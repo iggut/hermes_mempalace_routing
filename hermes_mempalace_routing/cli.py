@@ -592,8 +592,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_operator_commands(sub)
 
-    p_operator = sub.add_parser("operator", help="Namespace for operator commands.")
-    op_sub = p_operator.add_subparsers(dest="operator_command", required=True)
+    p_operator = sub.add_parser(
+        "operator",
+        help="Maintenance and inspection commands.",
+        description=(
+            "Operator commands for reading state, resolving conflicts, and running maintenance.\n\n"
+            "Read-only: inspect, conflicts, doctor, stats\n"
+            "Write/maintenance: pin, unpin, resolve-conflict, migrate, reindex"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    op_sub = p_operator.add_subparsers(
+        dest="operator_command",
+        required=True,
+        title="operator commands",
+        metavar="COMMAND",
+    )
     _add_operator_commands(op_sub)
 
     eval_common = argparse.ArgumentParser(add_help=False)
