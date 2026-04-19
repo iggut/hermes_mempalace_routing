@@ -3,6 +3,20 @@
 Run directly with:
 
     python examples/host_hooks_example.py
+
+Minimal wiring pattern:
+
+    from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
+
+    class Host:
+        pass
+
+    host = Host()
+    hooks = HermesHostHooks.from_config(RoutingConfig.default())
+    hooks.install_into(host)
+
+    # host.pre_model_context_assembly(...)
+    # host.post_turn_artifact_ingestion(...)
 """
 
 from __future__ import annotations
@@ -18,12 +32,16 @@ from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
 
 
 def main() -> int:
+    class Host:
+        pass
+
     with tempfile.TemporaryDirectory(prefix="hermes-mp-example-") as tmp:
         hooks = HermesHostHooks.from_config(
             RoutingConfig(base_dir=Path(tmp), storage_backend="jsonl")
         )
+        host = hooks.install_into(Host())
 
-        hooks.post_turn_artifact_ingestion(
+        host.post_turn_artifact_ingestion(
             turn_id="turn-123",
             room="project/hermes",
             fact_type="stacktrace",
@@ -32,9 +50,9 @@ def main() -> int:
             route_tags=["syntaxerror", "startup"],
         )
 
-        payload = hooks.pre_model_context_assembly(
+        payload = host.pre_model_context_assembly(
             query="why did Hermes startup fail?",
-            total_tokens=8000,
+            total_tokens=4096,
             active_project="hermes",
             mode="debugging",
         )

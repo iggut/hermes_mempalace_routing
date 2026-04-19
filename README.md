@@ -66,34 +66,15 @@ If you already have a host object and just want to wire the bridge in place, the
 ```python
 from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
 
+class Host:
+    pass
+
+host = Host()
 hooks = HermesHostHooks.from_config(RoutingConfig.default())
 hooks.install_into(host)
-```
 
-```python
-from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
-
-hooks = HermesHostHooks.from_config(RoutingConfig.default())
-
-# Post-turn: store the exact raw artifact first.
-hooks.post_turn_artifact_ingestion(
-    turn_id="turn-123",
-    room="project/hermes",
-    fact_type="stacktrace",
-    summary="Hermes startup failed with SyntaxError",
-    raw_text='SyntaxError: invalid syntax\n  File "run_agent.py", line 1\n',
-    route_tags=["syntaxerror", "startup"],
-)
-
-# Pre-model: build the routed context block for the next prompt.
-payload = hooks.pre_model_context_assembly(
-    query="why did Hermes startup fail?",
-    total_tokens=8000,
-    active_project="hermes",
-    mode="debugging",
-)
-
-print(payload["rendered_block"])
+# host.pre_model_context_assembly(...)
+# host.post_turn_artifact_ingestion(...)
 ```
 
 ## Room model
