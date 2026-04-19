@@ -61,6 +61,15 @@ Use the file below if you want a copy-paste runnable sample:
 - `examples/host_hooks_example.py`
 - run it with: `python examples/host_hooks_example.py`
 
+If you already have a host object and just want to wire the bridge in place, the minimal pattern is:
+
+```python
+from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
+
+hooks = HermesHostHooks.from_config(RoutingConfig.default())
+hooks.install_into(host)
+```
+
 ```python
 from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
 

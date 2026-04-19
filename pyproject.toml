@@ -22,12 +22,13 @@ dev = [
 [project.scripts]
 hermes-mp = "hermes_mempalace_routing.cli:main"
 
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["."]
+
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["hermes_mempalace_routing*"]
-
-[tool.pytest.ini_options]
-addopts = "-q"
-testpaths = ["tests"]

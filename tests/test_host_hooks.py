@@ -17,10 +17,8 @@ def test_host_hooks_wire_post_turn_into_next_pre_model_context(tmp_path: Path) -
         room="project/hermes",
         fact_type="stacktrace",
         summary="Hermes startup failed with SyntaxError",
-        raw_text="SyntaxError: invalid syntax\n  File \"run_agent.py\", line 1\n",
+        raw_text='SyntaxError: invalid syntax\n  File "run_agent.py", line 1\n',
         route_tags=["syntaxerror", "startup"],
-        conflict_key=None,
-        pinned=False,
     )
 
     payload = hooks.pre_model_context_assembly(
@@ -37,3 +35,19 @@ def test_host_hooks_wire_post_turn_into_next_pre_model_context(tmp_path: Path) -
     assert payload["routing_disabled"] is False
     assert "Hermes startup failed with SyntaxError" in payload["rendered_block"]
     assert "SyntaxError: invalid syntax" in payload["rendered_block"]
+
+
+class DummyHost:
+    pass
+
+
+def test_install_into_binds_host_callables(tmp_path: Path) -> None:
+    hooks = HermesHostHooks.from_config(_jsonl_config(tmp_path))
+    host = DummyHost()
+
+    installed = hooks.install_into(host)
+
+    assert installed is host
+    assert host.mempalace_hooks is hooks
+    assert callable(host.pre_model_context_assembly)
+    assert callable(host.post_turn_artifact_ingestion)

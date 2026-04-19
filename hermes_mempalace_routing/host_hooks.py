@@ -23,6 +23,20 @@ class HermesHostHooks:
     def from_config(cls, config: RoutingConfig | None = None) -> "HermesHostHooks":
         return cls(HermesMemPalaceRoutingPlugin(config))
 
+    def install_into(self, host: Any, *, overwrite: bool = True) -> Any:
+        """Attach the host hook callables onto an arbitrary host object.
+
+        This is a lightweight integration helper for Hermes host apps that want to
+        wire the routing bridge in one place instead of calling the methods manually.
+        When ``overwrite`` is False, existing attributes are preserved.
+        """
+        setattr(host, "mempalace_hooks", self)
+        if overwrite or not hasattr(host, "pre_model_context_assembly"):
+            setattr(host, "pre_model_context_assembly", self.pre_model_context_assembly)
+        if overwrite or not hasattr(host, "post_turn_artifact_ingestion"):
+            setattr(host, "post_turn_artifact_ingestion", self.post_turn_artifact_ingestion)
+        return host
+
     def pre_model_context_assembly(
         self,
         query: str,

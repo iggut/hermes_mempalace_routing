@@ -7,8 +7,12 @@ Run directly with:
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hermes_mempalace_routing import HermesHostHooks, RoutingConfig
 
