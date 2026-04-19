@@ -520,7 +520,13 @@ def cmd_eval_ops(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hermes-mp",
-        description="Hermes MemPalace operator CLI for routing, inspection, and storage maintenance.",
+        description=(
+            "Hermes MemPalace CLI for routing, inspection, and storage maintenance.\n\n"
+            "Core workflows: route, eval\n"
+            "Operator workflows: inspect, pin, unpin, conflicts, resolve-conflict, doctor, migrate, reindex, stats\n"
+            "Grouped namespace: operator"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--base-dir", default=str(RoutingConfig.default().base_dir))
     parser.add_argument(
@@ -532,13 +538,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def _add_operator_commands(sp):
-        p_inspect = sp.add_parser("inspect", help="Inspect rooms, memories, or artifacts.")
+        p_inspect = sp.add_parser("inspect", help="Inspect a room, memory, or artifact.")
         p_inspect.add_argument("target_type", choices=["room", "memory", "artifact"])
         p_inspect.add_argument("target_id")
         p_inspect.add_argument("--json", action="store_true", help="Machine-readable JSON output")
         p_inspect.set_defaults(func=cmd_inspect)
 
-        p_pin = sp.add_parser("pin", help="Pin a memory so it wins retrieval.")
+        p_pin = sp.add_parser("pin", help="Pin a memory for retrieval priority.")
         p_pin.add_argument("memory_id")
         p_pin.add_argument("--reason", default="operator pin")
         p_pin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
@@ -550,12 +556,12 @@ def build_parser() -> argparse.ArgumentParser:
         p_unpin.add_argument("--json", action="store_true", help="Machine-readable JSON output")
         p_unpin.set_defaults(func=cmd_unpin)
 
-        p_conflicts = sp.add_parser("conflicts", help="List conflict records and their effective winners.")
+        p_conflicts = sp.add_parser("conflicts", help="List conflict records and current winners.")
         p_conflicts.add_argument("--room")
         p_conflicts.add_argument("--json", action="store_true", help="Machine-readable JSON output")
         p_conflicts.set_defaults(func=cmd_conflicts)
 
-        p_resolve = sp.add_parser("resolve-conflict", help="Pin an explicit winner for a conflict key.")
+        p_resolve = sp.add_parser("resolve-conflict", help="Set an explicit winner for a conflict key.")
         p_resolve.add_argument("conflict_key")
         p_resolve.add_argument("--winner", required=True)
         p_resolve.add_argument("--actor", default="operator")
@@ -563,15 +569,15 @@ def build_parser() -> argparse.ArgumentParser:
         p_resolve.add_argument("--json", action="store_true", help="Machine-readable JSON output")
         p_resolve.set_defaults(func=cmd_resolve_conflict)
 
-        p_doctor = sp.add_parser("doctor", help="Check database health and migration state.")
+        p_doctor = sp.add_parser("doctor", help="Check storage health and migration state.")
         p_doctor.add_argument("--json", action="store_true", help="Machine-readable JSON output")
         p_doctor.set_defaults(func=cmd_doctor)
 
-        p_migrate = sp.add_parser("migrate", help="Apply pending schema migrations.")
+        p_migrate = sp.add_parser("migrate", help="Apply pending migrations.")
         p_migrate.add_argument("--json", action="store_true", help="Machine-readable JSON output")
         p_migrate.set_defaults(func=cmd_migrate)
 
-        p_reindex = sp.add_parser("reindex", help="Rebuild index rows from raw artifacts.")
+        p_reindex = sp.add_parser("reindex", help="Rebuild index rows from stored artifacts.")
         p_reindex.add_argument(
             "--apply",
             action="store_true",
@@ -579,10 +585,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p_reindex.set_defaults(func=cmd_reindex)
 
-        p_stats = sp.add_parser("stats", help="Summarize storage health and counts.")
+        p_stats = sp.add_parser("stats", help="Summarize storage counts and health.")
         p_stats.set_defaults(func=cmd_stats)
 
-    p_route = sub.add_parser("route", help="Build a routed context payload for a query.")
+    p_route = sub.add_parser("route", help="Assemble routed context for a query.")
     p_route.add_argument("query")
     p_route.add_argument("--active-project")
     p_route.add_argument("--mode", choices=["debugging", "design"], default="debugging")
@@ -594,9 +600,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_operator = sub.add_parser(
         "operator",
-        help="Maintenance and inspection commands.",
+        help="Operator maintenance and inspection commands.",
         description=(
-            "Operator commands for reading state, resolving conflicts, and running maintenance.\n\n"
+            "Operator commands for inspecting state and managing maintenance.\n\n"
             "Read-only: inspect, conflicts, doctor, stats\n"
             "Write/maintenance: pin, unpin, resolve-conflict, migrate, reindex"
         ),
@@ -648,21 +654,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_eval = sub.add_parser(
         "eval",
-        help="Sprint 4 validation suites (tokenizer, retrieval, ops). "
-        "The top-level synonym `validate` is rewritten to `eval` before parsing (same subcommands).",
+        help="Run evaluation suites and validation fixtures.",
     )
     eval_sub = p_eval.add_subparsers(dest="eval_cmd", required=True)
 
-    p_er = eval_sub.add_parser("run", parents=[eval_common], help="Run all case kinds + tokenizer matrix")
+    p_er = eval_sub.add_parser("run", parents=[eval_common], help="Run all evaluation suites.")
     p_er.set_defaults(func=cmd_eval_run)
 
-    p_et = eval_sub.add_parser("tokenizer-fit", parents=[eval_common], help="Tokenizer matrix + tokenizer_fit cases")
+    p_et = eval_sub.add_parser("tokenizer-fit", parents=[eval_common], help="Run tokenizer-fit cases and matrix checks.")
     p_et.set_defaults(func=cmd_eval_tokenizer_fit)
 
-    p_ee = eval_sub.add_parser("retrieval", parents=[eval_common], help="Retrieval cases only")
+    p_ee = eval_sub.add_parser("retrieval", parents=[eval_common], help="Run retrieval cases only.")
     p_ee.set_defaults(func=cmd_eval_retrieval)
 
-    p_eo = eval_sub.add_parser("ops", parents=[eval_common], help="Operational / degraded-path cases")
+    p_eo = eval_sub.add_parser("ops", parents=[eval_common], help="Run operational and degraded-path cases.")
     p_eo.set_defaults(func=cmd_eval_ops)
 
     return parser

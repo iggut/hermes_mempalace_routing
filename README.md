@@ -151,33 +151,38 @@ For local parser verification without hitting the live service, point `HERMES_SM
 Global flags (place **before** the subcommand): `--base-dir PATH`, optional `--storage {sqlite,jsonl}`.
 For automation, most operator commands also accept `--json`.
 The same operator commands are also available under the `operator` namespace, e.g. `hermes-mp operator doctor`.
+For a consistent operator-manual tone, the examples below prefer the namespace form for maintenance commands.
 
 ```bash
-# Health and schema
-hermes-mp --base-dir ~/.hermes/mempalace-routing doctor
-hermes-mp --base-dir ~/.hermes/mempalace-routing migrate
-hermes-mp --base-dir ~/.hermes/mempalace-routing stats
+# Operator health and schema
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator doctor
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator migrate
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator stats
 
-# Rebuild missing DB rows from raw files (SQLite; default dry-run)
-hermes-mp --base-dir ~/.hermes/mempalace-routing reindex
-hermes-mp --base-dir ~/.hermes/mempalace-routing reindex --apply
+# Operator reindex
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator reindex
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator reindex --apply
 
-# Routing (human-readable)
+# Assemble routed context for a query
 hermes-mp --base-dir ~/.hermes/mempalace-routing route "why is hermes failing" --active-project hermes --mode debugging
 
-# Machine-readable route payload (stable JSON, sorted keys)
+# Assemble routed context as stable JSON
 hermes-mp --base-dir ~/.hermes/mempalace-routing route "query" --json --mode debugging
 
-# Inspection
-hermes-mp --base-dir ~/.hermes/mempalace-routing inspect room project/hermes
-hermes-mp --base-dir ~/.hermes/mempalace-routing inspect memory mem_art_...
-hermes-mp --base-dir ~/.hermes/mempalace-routing inspect artifact art_...
+# Inspect a room, memory, or artifact
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator inspect room project/hermes
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator inspect memory mem_art_...
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator inspect artifact art_...
 
-# Pins and conflicts
-hermes-mp --base-dir ~/.hermes/mempalace-routing pin mem_... --reason "operator pin"
-hermes-mp --base-dir ~/.hermes/mempalace-routing unpin mem_... --reason "operator unpin"
-hermes-mp --base-dir ~/.hermes/mempalace-routing conflicts --room project/hermes
-hermes-mp --base-dir ~/.hermes/mempalace-routing resolve-conflict my.key --winner mem_... --actor operator --reason explicit
+# Pin a memory for retrieval priority
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator pin mem_... --reason "operator pin"
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator unpin mem_... --reason "operator unpin"
+
+# List conflict records and current winners
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator conflicts --room project/hermes
+
+# Set an explicit winner for a conflict key
+hermes-mp --base-dir ~/.hermes/mempalace-routing operator resolve-conflict my.key --winner mem_... --actor operator --reason explicit
 ```
 
 - **`doctor`:** Nonzero exit if blocking issues (migration mismatch, missing tables, missing raw files referenced by SQLite).  
