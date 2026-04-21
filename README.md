@@ -282,6 +282,35 @@ Storage root defaults to `~/.hermes/mempalace-routing/` (override with `RoutingC
 
 JSONL legacy additionally uses `index/*.jsonl` as an append-only index (see `storage.py`).
 
+## Operator note: OrderKing publish path
+
+Use this project as a read-only evidence router for POS order-publish research.
+
+Quick takeaways from the reviewed captures:
+- Publishing happens inside `VapeKing.exe`, not via printing.
+- The backend target repeatedly observed is `108.163.128.4:3306`.
+- The strongest publish marker is `publish_clicked`.
+- The most relevant UI form is `TQuoteFrm` with title `Purchases`.
+- Payment/change dialogs (`TEnterPmtFrm`, `TChangeDlg`) appear in the same transaction flow.
+- No separate foreground "other software" was confirmed in the reviewed windows.
+
+### Timeline appendix
+
+Exact event sequence captured in the report:
+
+- `2026-04-20T15:53:54.221962+00:00` — `TMsgDialog`
+- `2026-04-20T15:54:00.840738+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
+- `2026-04-20T15:56:44.247703+00:00` — `TMsgDialog`
+- `2026-04-20T15:56:57.345089+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
+- `2026-04-20T15:57:10.443801+00:00` — `TEnterPmtFrm`
+- `2026-04-20T15:57:16.870077+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
+- `2026-04-20T15:57:49.496778+00:00` — `TChangeDlg` / `Change`
+- `2026-04-20T15:57:55.897652+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
+- `2026-04-20T17:44:33.250000+00:00` — `publish_clicked`
+- `2026-04-20T17:44:44.795208+00:00` — `TQuoteFrm` / `Purchases`
+- `2026-04-20T17:44:58.911203+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
+
+
 ## Example: `route --json` shape
 
 The JSON payload includes query, mode, active project, budget fractions, ranked `route_candidates`, selected and dropped evidence ids with reasons, `fallback_used`, and token count estimates. Use it for automation and CI checks; field names are stable within a release series.
