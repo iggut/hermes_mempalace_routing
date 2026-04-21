@@ -107,7 +107,7 @@ def test_storage_read_error_fail_open(tmp_path: Path) -> None:
     def boom(*_a: object, **_k: object) -> None:
         raise StorageReadError("disk unavailable")
 
-    with patch.object(plugin.storage, "list_envelopes", boom):
+    with patch.object(plugin.storage, "list_envelopes_and_conflicts", boom):
         payload = plugin.build_context_for_query("q", 2000, None, "debugging")
     assert payload["fallback_used"] is True
 

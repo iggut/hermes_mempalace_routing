@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -42,6 +43,8 @@ class SQLiteRoutingStorage:
         self.index_dir = self.base_dir / "index"
         self.cache_dir = self.base_dir / "cache"
         self.db_path = config.resolved_db_path()
+        self._artifact_text_cache: OrderedDict[str, str] = OrderedDict()
+        self._artifact_text_cache_max = 256
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -56,6 +59,15 @@ class SQLiteRoutingStorage:
         conn = sqlite3.connect(str(self.db_path))
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
+        # Read-heavy defaults: WAL + mmap improve latency without changing query semantics.
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA cache_size=-64000")
+            conn.execute("PRAGMA mmap_size=268435456")
+        except sqlite3.Error:
+            pass
         return conn
 
     def _persist_raw_artifact_in_txn(self, turn_id: str, kind: str, text: str) -> RawArtifact:
@@ -244,6 +256,36 @@ class SQLiteRoutingStorage:
             if conn is not None:
                 conn.close()
 
+    def _conflict_from_row(self, row: sqlite3.Row) -> ConflictRecord:
+        raw_ids = _json_loads(row["candidate_memory_ids"])
+        if not isinstance(raw_ids, list):
+            raise IndexCorruptionError("Malformed conflicts.candidate_memory_ids")
+        try:
+            losers_raw = row["loser_memory_ids"]
+        except (KeyError, IndexError):
+            losers_raw = "[]"
+        try:
+            raw_losers = _json_loads(losers_raw)
+        except IndexCorruptionError:
+            raw_losers = []
+        if not isinstance(raw_losers, list):
+            raw_losers = []
+        try:
+            resolved_at = row["resolved_at"]
+        except (KeyError, IndexError):
+            resolved_at = None
+        return ConflictRecord(
+            conflict_key=row["conflict_key"],
+            room=row["room"],
+            candidate_memory_ids=[str(x) for x in raw_ids],
+            resolved_memory_id=row["resolved_memory_id"],
+            loser_memory_ids=[str(x) for x in raw_losers],
+            resolution_reason=row["resolution_reason"],
+            status=row["status"] or "unresolved",
+            resolution_actor=row["resolution_actor"],
+            resolved_at=resolved_at,
+        )
+
     def _row_to_envelope(self, row: sqlite3.Row) -> MemoryEnvelope:
         try:
             route_tags = _json_loads(row["route_tags"])
@@ -282,43 +324,27 @@ class SQLiteRoutingStorage:
         finally:
             conn.close()
 
+    def list_envelopes_and_conflicts(self) -> tuple[list[MemoryEnvelope], list[ConflictRecord]]:
+        """Single connection: envelopes + conflicts (pre-model routing hot path)."""
+        conn = self._connect()
+        try:
+            cur = conn.execute("SELECT * FROM envelopes ORDER BY created_at")
+            envs = [self._row_to_envelope(r) for r in cur.fetchall()]
+            cur = conn.execute("SELECT * FROM conflicts")
+            conflicts = [self._conflict_from_row(r) for r in cur.fetchall()]
+            return envs, conflicts
+        except IndexCorruptionError:
+            raise
+        except sqlite3.Error as exc:
+            raise StorageReadError(str(exc)) from exc
+        finally:
+            conn.close()
+
     def list_conflicts(self) -> list[ConflictRecord]:
         conn = self._connect()
         try:
             cur = conn.execute("SELECT * FROM conflicts")
-            out: list[ConflictRecord] = []
-            for row in cur.fetchall():
-                raw_ids = _json_loads(row["candidate_memory_ids"])
-                if not isinstance(raw_ids, list):
-                    raise IndexCorruptionError("Malformed conflicts.candidate_memory_ids")
-                try:
-                    losers_raw = row["loser_memory_ids"]
-                except (KeyError, IndexError):
-                    losers_raw = "[]"
-                try:
-                    raw_losers = _json_loads(losers_raw)
-                except IndexCorruptionError:
-                    raw_losers = []
-                if not isinstance(raw_losers, list):
-                    raw_losers = []
-                try:
-                    resolved_at = row["resolved_at"]
-                except (KeyError, IndexError):
-                    resolved_at = None
-                out.append(
-                    ConflictRecord(
-                        conflict_key=row["conflict_key"],
-                        room=row["room"],
-                        candidate_memory_ids=[str(x) for x in raw_ids],
-                        resolved_memory_id=row["resolved_memory_id"],
-                        loser_memory_ids=[str(x) for x in raw_losers],
-                        resolution_reason=row["resolution_reason"],
-                        status=row["status"] or "unresolved",
-                        resolution_actor=row["resolution_actor"],
-                        resolved_at=resolved_at,
-                    )
-                )
-            return out
+            return [self._conflict_from_row(r) for r in cur.fetchall()]
         except IndexCorruptionError:
             raise
         except sqlite3.Error as exc:
@@ -375,6 +401,10 @@ class SQLiteRoutingStorage:
             conn.close()
 
     def read_artifact_text(self, artifact_id: str) -> str | None:
+        cached = self._artifact_text_cache.get(artifact_id)
+        if cached is not None:
+            self._artifact_text_cache.move_to_end(artifact_id)
+            return cached
         art = self.get_artifact(artifact_id)
         if art is None:
             return None
@@ -382,9 +412,14 @@ class SQLiteRoutingStorage:
         if not path.is_file():
             return None
         try:
-            return path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except OSError as exc:
             raise StorageReadError(str(exc)) from exc
+        self._artifact_text_cache[artifact_id] = text
+        self._artifact_text_cache.move_to_end(artifact_id)
+        while len(self._artifact_text_cache) > self._artifact_text_cache_max:
+            self._artifact_text_cache.popitem(last=False)
+        return text
 
     def _atomic_write_text(self, final_path: Path, text: str) -> None:
         final_path.parent.mkdir(parents=True, exist_ok=True)

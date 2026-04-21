@@ -51,3 +51,8 @@ def test_install_into_binds_host_callables(tmp_path: Path) -> None:
     assert host.mempalace_hooks is hooks
     assert callable(host.pre_model_context_assembly)
     assert callable(host.post_turn_artifact_ingestion)
+    # Bound-method identity is unstable across attribute reads; compare underlying function + self.
+    assert host.build_context_for_query.__func__ is host.pre_model_context_assembly.__func__
+    assert host.build_context_for_query.__self__ is host.pre_model_context_assembly.__self__
+    assert host.record_turn_artifact.__func__ is host.post_turn_artifact_ingestion.__func__
+    assert host.record_turn_artifact.__self__ is host.post_turn_artifact_ingestion.__self__

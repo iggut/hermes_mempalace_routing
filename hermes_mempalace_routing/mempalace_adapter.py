@@ -39,27 +39,60 @@ def _normalize_status(payload: object) -> dict[str, Any]:
     }
 
 
+def _flatten_drawer_item(it: dict[str, Any]) -> dict[str, Any]:
+    nested = it.get("drawer")
+    if isinstance(nested, dict):
+        merged = {**nested, **it}
+        merged.pop("drawer", None)
+        return merged
+    return it
+
+
 def _normalize_search(payload: object) -> list[MemPalaceDrawerHit]:
     if payload is None:
         return []
     items: list[Any]
     if isinstance(payload, dict):
-        items = payload.get("results") or payload.get("hits") or payload.get("drawers") or []
+        items = (
+            payload.get("results")
+            or payload.get("hits")
+            or payload.get("drawers")
+            or payload.get("items")
+            or payload.get("data")
+            or []
+        )
     elif isinstance(payload, list):
         items = payload
     else:
         return []
     out: list[MemPalaceDrawerHit] = []
-    for it in items:
-        if not isinstance(it, dict):
+    for raw in items:
+        if not isinstance(raw, dict):
             continue
+        it = _flatten_drawer_item(raw)
         did = _as_str(it, "drawer_id") or _as_str(it, "id") or _as_str(it, "drawerId")
         wing = _as_str(it, "wing")
         room = _as_str(it, "room")
-        content = _as_str(it, "content") or _as_str(it, "verbatim") or _as_str(it, "text")
+        content = (
+            _as_str(it, "content")
+            or _as_str(it, "verbatim")
+            or _as_str(it, "text")
+            or _as_str(it, "body")
+        )
         if not did or not content:
             continue
-        meta = {k: v for k, v in it.items() if k not in {"drawer_id", "id", "wing", "room", "content", "verbatim", "text"}}
+        skip = {
+            "drawer_id",
+            "id",
+            "drawerId",
+            "wing",
+            "room",
+            "content",
+            "verbatim",
+            "text",
+            "body",
+        }
+        meta = {k: v for k, v in it.items() if k not in skip}
         out.append(MemPalaceDrawerHit(drawer_id=did, wing=wing, room=room, content=content, metadata=meta))
     return out
 
@@ -70,8 +103,15 @@ def _normalize_duplicate(payload: object) -> tuple[bool, str | None]:
     dup = payload.get("duplicate")
     if dup is None:
         dup = payload.get("is_duplicate")
+    if dup is None:
+        dup = payload.get("match")
     is_dup = bool(dup) if dup is not None else False
-    mid = payload.get("match_id") or payload.get("best_match_id") or payload.get("drawer_id")
+    mid = (
+        payload.get("match_id")
+        or payload.get("best_match_id")
+        or payload.get("drawer_id")
+        or payload.get("matched_drawer_id")
+    )
     return is_dup, (str(mid) if mid else None)
 
 

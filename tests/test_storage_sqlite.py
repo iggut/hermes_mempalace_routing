@@ -1,10 +1,12 @@
 from pathlib import Path
 import sqlite3
+from unittest.mock import patch
 
 import pytest
 
 from hermes_mempalace_routing.config import RoutingConfig
 from hermes_mempalace_routing.migrations import MigrationError, assert_schema_migrations, migrate
+from hermes_mempalace_routing.models import ConflictRecord
 from hermes_mempalace_routing.storage_sqlite import SQLiteRoutingStorage
 
 
@@ -54,6 +56,57 @@ def test_read_artifact_text_missing_file_returns_none(tmp_path: Path) -> None:
     assert art is not None
     Path(art.path).unlink()
     assert store.read_artifact_text(aid) is None
+
+
+def test_list_envelopes_and_conflicts_matches_individual_queries(tmp_path: Path) -> None:
+    cfg = RoutingConfig(base_dir=tmp_path, storage_backend="sqlite", db_path=tmp_path / "m.db")
+    store = SQLiteRoutingStorage(cfg)
+    env = store.persist_memory_turn(
+        turn_id="t1",
+        room="scratch",
+        fact_type="note",
+        summary="s",
+        raw_text="body",
+        route_tags=[],
+        conflict_key=None,
+        pinned=False,
+    )
+    store.append_conflict(
+        ConflictRecord(
+            conflict_key="k1",
+            room="scratch",
+            candidate_memory_ids=[env.memory_id, "other"],
+        )
+    )
+    combined = store.list_envelopes_and_conflicts()
+    assert combined == (store.list_envelopes(), store.list_conflicts())
+
+
+def test_read_artifact_text_caches_immutable_raws(tmp_path: Path) -> None:
+    cfg = RoutingConfig(base_dir=tmp_path, storage_backend="sqlite", db_path=tmp_path / "m.db")
+    store = SQLiteRoutingStorage(cfg)
+    env = store.persist_memory_turn(
+        turn_id="t1",
+        room="scratch",
+        fact_type="note",
+        summary="s",
+        raw_text="cached-once",
+        route_tags=[],
+        conflict_key=None,
+        pinned=False,
+    )
+    aid = env.provenance_artifact_ids[0]
+    calls: list[int] = []
+    _orig_read = Path.read_text
+
+    def counting_read(self: Path, *a: object, **k: object) -> str:
+        calls.append(1)
+        return _orig_read(self, *a, **k)
+
+    with patch.object(Path, "read_text", counting_read):
+        assert store.read_artifact_text(aid) == "cached-once"
+        assert store.read_artifact_text(aid) == "cached-once"
+    assert len(calls) == 1
 
 
 def test_artifact_primary_key_enforced(tmp_path: Path) -> None:

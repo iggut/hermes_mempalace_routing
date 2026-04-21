@@ -37,6 +37,11 @@ class HermesHostHooks:
             setattr(host, "post_turn_artifact_ingestion", self.post_turn_artifact_ingestion)
         if overwrite or not hasattr(host, "session_wake_or_resume"):
             setattr(host, "session_wake_or_resume", self.session_wake_or_resume)
+        # Hermes plugin-style names (same callables; hosts may expect these attributes).
+        if overwrite or not hasattr(host, "build_context_for_query"):
+            setattr(host, "build_context_for_query", self.pre_model_context_assembly)
+        if overwrite or not hasattr(host, "record_turn_artifact"):
+            setattr(host, "record_turn_artifact", self.post_turn_artifact_ingestion)
         return host
 
     def pre_model_context_assembly(

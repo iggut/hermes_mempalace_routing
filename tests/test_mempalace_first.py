@@ -4,6 +4,7 @@ from pathlib import Path
 
 from hermes_mempalace_routing.config import RoutingConfig
 from hermes_mempalace_routing.host_hooks import HermesHostHooks
+from hermes_mempalace_routing.mempalace_adapter import MemPalaceAdapter
 from hermes_mempalace_routing.plugin import HermesMemPalaceRoutingPlugin
 
 
@@ -204,3 +205,22 @@ def test_derive_mempalace_scope_project_room():
     )
     assert s.wing == "hermes"
     assert s.room == "project/hermes"
+
+
+def test_mempalace_search_normalizes_items_and_nested_drawer() -> None:
+    def mempalace_search(query: str, wing: str | None = None, room: str | None = None, limit: int = 24):
+        return {
+            "items": [
+                {
+                    "drawer": {"id": "nested-1", "body": "verbatim body"},
+                    "wing": "w",
+                    "room": "project/w",
+                }
+            ]
+        }
+
+    adapter = MemPalaceAdapter({"mempalace_search": mempalace_search})
+    hits = adapter.search("q", wing="w", limit=8)
+    assert len(hits) == 1
+    assert hits[0].drawer_id == "nested-1"
+    assert hits[0].content == "verbatim body"

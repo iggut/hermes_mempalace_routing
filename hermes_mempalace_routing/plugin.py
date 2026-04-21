@@ -157,9 +157,14 @@ class HermesMemPalaceRoutingPlugin:
         self,
         query: str,
         active_project: str | None,
+        *,
+        local_envelopes: list[MemoryEnvelope] | None = None,
     ) -> list[MemoryEnvelope]:
         """Merge filtered local metadata envelopes with MemPalace search + resume cache."""
-        local = self._filter_local_envelopes(self.storage.list_envelopes())
+        if local_envelopes is None:
+            local = self._filter_local_envelopes(self.storage.list_envelopes())
+        else:
+            local = self._filter_local_envelopes(local_envelopes)
         extra: list[MemoryEnvelope] = []
         if self.config.memory_backend == "mempalace_first" and self.config.mempalace_enabled:
             extra.extend(self._resume_envelope_cache)
@@ -287,12 +292,13 @@ class HermesMemPalaceRoutingPlugin:
         active_project: str | None,
         mode: str,
     ) -> dict[str, Any]:
-        envelopes = self.envelopes_for_routing(query, active_project)
+        local_envs, stored_conflicts = self.storage.list_envelopes_and_conflicts()
+        envelopes = self.envelopes_for_routing(query, active_project, local_envelopes=local_envs)
         self.clear_resume_cache()
         conflicts = list_conflicts(
             envelopes,
             self.config,
-            stored=self.storage.list_conflicts(),
+            stored=stored_conflicts,
         )
         budget = self.context_engine.allocate_budget(total_tokens)
         max_raw_chars = max(256, self.config.max_raw_excerpt_tokens * 4)

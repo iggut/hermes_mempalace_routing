@@ -78,6 +78,8 @@ class StorageBackend(Protocol):
 
     def list_conflicts(self) -> list[ConflictRecord]: ...
 
+    def list_envelopes_and_conflicts(self) -> tuple[list[MemoryEnvelope], list[ConflictRecord]]: ...
+
     def list_artifacts(self) -> list[RawArtifact]: ...
 
     def get_artifact(self, artifact_id: str) -> RawArtifact | None: ...
@@ -275,6 +277,9 @@ class JsonlStorage:
     def list_conflicts(self) -> list[ConflictRecord]:
         rows = self.read_jsonl(self.index_dir / "conflicts.jsonl")
         return [ConflictRecord(**row) for row in rows]
+
+    def list_envelopes_and_conflicts(self) -> tuple[list[MemoryEnvelope], list[ConflictRecord]]:
+        return (self.list_envelopes(), self.list_conflicts())
 
     def list_artifacts(self) -> list[RawArtifact]:
         rows = self.read_jsonl(self.artifacts_jsonl)
