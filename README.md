@@ -294,6 +294,7 @@ Quick takeaways from the reviewed captures:
 - The strongest publish marker is `publish_clicked`.
 - The most relevant UI form is `TQuoteFrm` with title `Purchases`.
 - Payment/change dialogs (`TEnterPmtFrm`, `TChangeDlg`) appear in the same transaction flow.
+- Sales/reporting windows also recur in both captures and are a good feature candidate to clone in a companion app.
 - No separate foreground "other software" was confirmed in the reviewed windows.
 
 ### Timeline appendix

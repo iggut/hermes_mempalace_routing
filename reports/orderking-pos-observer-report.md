@@ -81,6 +81,7 @@ What I did see:
 Current conclusion:
 - The visible order workflow is still happening inside VapeKing.
 - If orders are being created from another software, that software was not brought to the foreground in these windows, or it interacts indirectly with the same backend rather than with the POS UI.
+- Sales/reporting is another recurring workflow in both captures, and it is a strong feature candidate to clone for a companion app.
 
 ## Practical implication for creating orders from other software
 
