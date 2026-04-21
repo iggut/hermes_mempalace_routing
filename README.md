@@ -43,9 +43,7 @@ When **`memory_backend="mempalace_first"`** and **`mempalace_enabled=True`**, du
 - **Wing / room / drawer:** `derive_mempalace_scope()` maps Hermes `active_project` and `room` to MemPalace wing/room; drawers are **`mempalace_add_drawer`** results; verbatim bytes live in MemPalace, while SQLite holds a thin **`MemoryEnvelope`** row (`mem_mp_<drawer_id>`) with **`mempalace_verbatim`** on `route_tags` and verbatim text in **`provenance_excerpt`** for routing.
 - **Recall:** `build_context_for_query` merges MemPalace **`mempalace_search`** hits (and optional **`session_wake_or_resume`** / resume cache) with **transient** local rows (e.g. **`scratch`**) and routes them through the existing scorer + budget fitter. Legacy local durable rows are **excluded** unless **`mempalace_include_legacy_local_envelopes=True`**.
 - **Write:** post-turn **`record_turn_artifact`** → sanitize → optional redact → **`mempalace_check_duplicate`** → **`mempalace_add_drawer`** (no local raw file when **`write_raw_artifacts=False`**). Duplicates skip **`add_drawer`** unless **`mempalace_allow_duplicate_supersede=True`**.
-- **Duplicate policy (explicit):** **`mempalace_check_duplicate`** is treated as a content-first duplicate signal at the MemPalace boundary; this package does **not** force wing/room-local duplicate semantics on top of that API. If you need context-sensitive duplicates (same sentence allowed in multiple rooms), apply that policy in host hooks before skipping writes.
 - **Fail-open:** MemPalace errors return empty search or **`None`** from ingest when **`mempalace_fail_open=True`** (default); chat continues.
-- **Resume compatibility:** when **`mempalace_resume`** is unavailable, session wake/resume falls back to **`mempalace_search`** (host-side orchestration, not a hidden pseudo-tool).
 - **Hermes built-in durable API:** use **`NoOpBuiltinDurableMemory`** in the host to disable parallel Hermes long-term blobs while keeping session/transient buffers in Hermes.
 
 Key **`RoutingConfig`** fields: `memory_backend`, `mempalace_enabled`, `mempalace_fail_open`, `mempalace_resume_on_start`, `mempalace_recall_on_every_query`, `mempalace_duplicate_threshold`, `mempalace_default_wing_strategy`, `mempalace_default_room_strategy`, `mempalace_fallback_local_write`, `disable_builtin_durable_memory`.
@@ -283,41 +281,6 @@ Storage root defaults to `~/.hermes/mempalace-routing/` (override with `RoutingC
 ```
 
 JSONL legacy additionally uses `index/*.jsonl` as an append-only index (see `storage.py`).
-
-## Operator note: OrderKing publish path
-
-Use this project as a read-only evidence router for POS order-publish research.
-
-Quick takeaways from the reviewed captures:
-- Publishing happens inside `VapeKing.exe`, not via printing.
-- The backend target repeatedly observed is `108.163.128.4:3306`.
-- The strongest publish marker is `publish_clicked`.
-- The most relevant UI form is `TQuoteFrm` with title `Purchases`.
-- Payment/change dialogs (`TEnterPmtFrm`, `TChangeDlg`) appear in the same transaction flow.
-- Sales/reporting windows also recur in both captures and are a good feature candidate to clone in a companion app.
-- No separate foreground "other software" was confirmed in the reviewed windows.
-
-Feature parity shortlist for a companion app:
-- Sales flow: browse/open the sales screen, move between sales views, and keep the main POS state visible.
-- Publish flow: create a clear publish action that matches the POS submit/sync moment and surfaces success/failure.
-- Payment flow: support payment entry, change handling, and the final return to the main POS screen.
-
-### Timeline appendix
-
-Exact event sequence captured in the report:
-
-- `2026-04-20T15:53:54.221962+00:00` — `TMsgDialog`
-- `2026-04-20T15:54:00.840738+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
-- `2026-04-20T15:56:44.247703+00:00` — `TMsgDialog`
-- `2026-04-20T15:56:57.345089+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
-- `2026-04-20T15:57:10.443801+00:00` — `TEnterPmtFrm`
-- `2026-04-20T15:57:16.870077+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
-- `2026-04-20T15:57:49.496778+00:00` — `TChangeDlg` / `Change`
-- `2026-04-20T15:57:55.897652+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
-- `2026-04-20T17:44:33.250000+00:00` — `publish_clicked`
-- `2026-04-20T17:44:44.795208+00:00` — `TQuoteFrm` / `Purchases`
-- `2026-04-20T17:44:58.911203+00:00` — `TPOS_frm` / `VapeKing Store 6 Station Master`
-
 
 ## Example: `route --json` shape
 
