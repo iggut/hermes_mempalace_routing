@@ -207,6 +207,56 @@ def test_derive_mempalace_scope_project_room():
     assert s.room == "project/hermes"
 
 
+def test_hermes_mcp_style_tools_parse_json_and_duplicate_matches() -> None:
+    """Mirrors ``tools.mcp_tool._make_tool_handler``: ``(args: dict) -> str`` JSON."""
+
+    def mempalace_check_duplicate(args: dict, **kwargs: object) -> str:
+        import json
+
+        assert args["content"] == "hello"
+        assert args["threshold"] == 0.92
+        return json.dumps(
+            {
+                "result": {
+                    "is_duplicate": True,
+                    "matches": [{"id": "drawer_abc", "similarity": 0.95, "wing": "w", "room": "r"}],
+                }
+            }
+        )
+
+    def mempalace_search(args: dict, **kwargs: object) -> str:
+        import json
+
+        assert args["query"] == "q"
+        return json.dumps(
+            {
+                "result": {
+                    "results": [
+                        {
+                            "text": "verbatim from chroma",
+                            "wing": "w",
+                            "room": "project/w",
+                        }
+                    ]
+                }
+            }
+        )
+
+    adapter = MemPalaceAdapter(
+        {
+            "mempalace_check_duplicate": mempalace_check_duplicate,
+            "mempalace_search": mempalace_search,
+        }
+    )
+    is_dup, mid = adapter.check_duplicate("hello", "w", "r", threshold=0.92)
+    assert is_dup is True
+    assert mid == "drawer_abc"
+    hits = adapter.search("q", wing="w", limit=5)
+    assert len(hits) == 1
+    assert hits[0].content == "verbatim from chroma"
+    assert hits[0].drawer_id.startswith("mp_hit_")
+
+
 def test_mempalace_search_normalizes_items_and_nested_drawer() -> None:
     def mempalace_search(query: str, wing: str | None = None, room: str | None = None, limit: int = 24):
         return {
