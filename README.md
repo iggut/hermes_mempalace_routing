@@ -297,6 +297,11 @@ Quick takeaways from the reviewed captures:
 - Sales/reporting windows also recur in both captures and are a good feature candidate to clone in a companion app.
 - No separate foreground "other software" was confirmed in the reviewed windows.
 
+Feature parity shortlist for a companion app:
+- Sales flow: browse/open the sales screen, move between sales views, and keep the main POS state visible.
+- Publish flow: create a clear publish action that matches the POS submit/sync moment and surfaces success/failure.
+- Payment flow: support payment entry, change handling, and the final return to the main POS screen.
+
 ### Timeline appendix
 
 Exact event sequence captured in the report:
