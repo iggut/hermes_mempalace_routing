@@ -85,7 +85,19 @@ def _normalize_search(payload: object) -> list[MemPalaceDrawerHit]:
         if not content:
             continue
         if not did:
-            key_src = f"{wing}|{room}|{content[:512]}"
+            # Build a synthetic id using text + location + extra provenance to reduce collisions.
+            identity_meta = {k: it.get(k) for k in sorted(it.keys()) if k not in {"content", "verbatim", "text", "body"}}
+            key_src = json.dumps(
+                {
+                    "wing": wing,
+                    "room": room,
+                    "content": content[:1024],
+                    "meta": identity_meta,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
             hkey = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:24]
             did = f"mp_hit_{hkey}"
         skip = {
@@ -220,16 +232,27 @@ def _unwrap_hermes_mcp_json_result(raw: Any) -> Any:
 
 
 def _coerce_tool_return(raw: Any) -> Any:
-    """Hermes MCP handlers return JSON strings; tests often return dicts."""
+    """Normalize direct dict returns and Hermes MCP JSON wrapper payloads."""
     if isinstance(raw, dict):
+        if "structuredContent" in raw and isinstance(raw["structuredContent"], dict):
+            return raw["structuredContent"]
+        if "result" in raw:
+            inner = raw["result"]
+            if isinstance(inner, str):
+                s = inner.strip()
+                if s.startswith("{") or s.startswith("["):
+                    try:
+                        return json.loads(inner)
+                    except json.JSONDecodeError:
+                        return inner
+            return inner
+        if raw.get("error") is not None:
+            return raw
         return raw
     if isinstance(raw, str):
         s = raw.strip()
         if s.startswith("{") or s.startswith("["):
-            try:
-                return _unwrap_hermes_mcp_json_result(raw)
-            except json.JSONDecodeError:
-                return raw
+            return _unwrap_hermes_mcp_json_result(raw)
     return raw
 
 
