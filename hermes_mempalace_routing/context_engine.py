@@ -9,6 +9,9 @@ from .models import (
     RawDiagnosticExcerpt,
     RouteCandidate,
 )
+import math
+from datetime import UTC, datetime, timedelta
+
 from .routing import RouteScorer, room_matches_active_project
 from .storage import StorageBackend
 from .tokenizer import count_tokens, truncate_to_tokens
@@ -38,6 +41,14 @@ class RoutingContextEngine:
         )
         return int(n * self._config.tokenizer_fallback_safety_multiplier)
 
+    def _precompute_scoring_params(self, query: str) -> tuple[list[str], datetime, float]:
+        q_tokens = [t for t in query.lower().split() if t]
+        now = datetime.now(UTC)
+        hl = timedelta(days=self._config.recency_half_life_days).total_seconds()
+        # Use -1.0 as a sentinel for hl <= 0 to avoid boost (original logic)
+        lam = math.log(2) / hl if hl > 0 else -1.0
+        return q_tokens, now, lam
+
     def allocate_budget(self, total_tokens: int) -> ContextBudget:
         live = int(total_tokens * 0.20)
         routed = int(total_tokens * 0.35)
@@ -63,8 +74,20 @@ class RoutingContextEngine:
         conflicts: list[ConflictRecord],
     ) -> tuple[list[RouteCandidate], dict[str, str]]:
         """Rank all envelopes and record exclusion reasons for ineligible candidates."""
+        q_tokens, now, lam = self._precompute_scoring_params(query)
+
         scored: list[RouteCandidate] = [
-            self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in envelopes
+            self.scorer.score(
+                query,
+                env,
+                active_project,
+                mode,
+                conflicts=conflicts,
+                precomputed_query_tokens=q_tokens,
+                now=now,
+                recency_lam=lam,
+            )
+            for env in envelopes
         ]
         scored.sort(key=lambda c: c.score, reverse=True)
         dropped: dict[str, str] = {}
@@ -142,8 +165,21 @@ class RoutingContextEngine:
         conflicts = conflicts or []
         already_cited_artifact_ids = already_cited_artifact_ids or frozenset()
         diagnostic_envs = [e for e in envelopes if e.fact_type in _DIAGNOSTIC_FACTS and e.provenance_artifact_ids]
+
+        q_tokens, now, lam = self._precompute_scoring_params(query)
+
         scored = [
-            self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in diagnostic_envs
+            self.scorer.score(
+                query,
+                env,
+                active_project,
+                mode,
+                conflicts=conflicts,
+                precomputed_query_tokens=q_tokens,
+                now=now,
+                recency_lam=lam,
+            )
+            for env in diagnostic_envs
         ]
         scored.sort(key=lambda c: c.score, reverse=True)
 
