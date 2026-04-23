@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 
 from .config import RoutingConfig, project_room
@@ -53,21 +54,38 @@ def _parse_created_at(created_at: str) -> datetime | None:
         return None
 
 
-def _recency_factor(created_at: str, half_life_days: float, max_boost: float) -> float:
+def _recency_factor(
+    created_at: str,
+    half_life_days: float,
+    max_boost: float,
+    *,
+    now: datetime | None = None,
+    lam: float | None = None,
+) -> float:
     dt = _parse_created_at(created_at)
     if dt is None:
         return 0.0
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    age = datetime.now(UTC) - dt
+
+    if now is None:
+        now = datetime.now(UTC)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+
+    age = now - dt
     if age.total_seconds() < 0:
         return max_boost
-    hl = timedelta(days=half_life_days).total_seconds()
-    if hl <= 0:
-        return 0.0
-    import math
 
-    lam = math.log(2) / hl
+    if lam is None:
+        hl = timedelta(days=half_life_days).total_seconds()
+        if hl <= 0:
+            return 0.0
+        lam = math.log(2) / hl
+
+    if lam < 0:  # Sentinel for hl <= 0
+        return 0.0
+
     return max_boost * math.exp(-lam * age.total_seconds())
 
 
@@ -83,6 +101,9 @@ class RouteScorer:
         mode: str = "debugging",
         *,
         conflicts: list[ConflictRecord] | None = None,
+        precomputed_query_tokens: list[str] | None = None,
+        now: datetime | None = None,
+        recency_lam: float | None = None,
     ) -> RouteCandidate:
         conflicts = conflicts or []
         bd: dict[str, float] = {}
@@ -108,7 +129,7 @@ class RouteScorer:
 
         summary = env.summary.lower()
         route_tags = [tag.lower() for tag in env.route_tags]
-        q_tokens = [t for t in query.lower().split() if t]
+        q_tokens = precomputed_query_tokens if precomputed_query_tokens is not None else [t for t in query.lower().split() if t]
 
         weights = self._config.room_weights_for_mode(mode)
 
@@ -157,6 +178,8 @@ class RouteScorer:
             env.created_at,
             self._config.recency_half_life_days,
             self._config.recency_boost_max,
+            now=now,
+            lam=recency_lam,
         )
         if bd["recency"] > 0.001:
             rationale.append("recency")
