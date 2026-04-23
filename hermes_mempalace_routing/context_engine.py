@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+from datetime import UTC, datetime, timedelta
+
 from .config import RoutingConfig
 from .models import (
     ConflictRecord,
@@ -63,8 +66,24 @@ class RoutingContextEngine:
         conflicts: list[ConflictRecord],
     ) -> tuple[list[RouteCandidate], dict[str, str]]:
         """Rank all envelopes and record exclusion reasons for ineligible candidates."""
+        # Optimization: Precompute values for batch scoring
+        q_tokens = [t for t in query.lower().split() if t]
+        now_utc = datetime.now(UTC)
+        hl = timedelta(days=self._config.recency_half_life_days).total_seconds()
+        decay_lam = math.log(2) / hl if hl > 0 else -1.0
+
         scored: list[RouteCandidate] = [
-            self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in envelopes
+            self.scorer.score(
+                query,
+                env,
+                active_project,
+                mode,
+                conflicts=conflicts,
+                query_tokens=q_tokens,
+                now_utc=now_utc,
+                decay_lam=decay_lam,
+            )
+            for env in envelopes
         ]
         scored.sort(key=lambda c: c.score, reverse=True)
         dropped: dict[str, str] = {}
@@ -142,8 +161,25 @@ class RoutingContextEngine:
         conflicts = conflicts or []
         already_cited_artifact_ids = already_cited_artifact_ids or frozenset()
         diagnostic_envs = [e for e in envelopes if e.fact_type in _DIAGNOSTIC_FACTS and e.provenance_artifact_ids]
+
+        # Optimization: Precompute values for batch scoring
+        q_tokens = [t for t in query.lower().split() if t]
+        now_utc = datetime.now(UTC)
+        hl = timedelta(days=self._config.recency_half_life_days).total_seconds()
+        decay_lam = math.log(2) / hl if hl > 0 else -1.0
+
         scored = [
-            self.scorer.score(query, env, active_project, mode, conflicts=conflicts) for env in diagnostic_envs
+            self.scorer.score(
+                query,
+                env,
+                active_project,
+                mode,
+                conflicts=conflicts,
+                query_tokens=q_tokens,
+                now_utc=now_utc,
+                decay_lam=decay_lam,
+            )
+            for env in diagnostic_envs
         ]
         scored.sort(key=lambda c: c.score, reverse=True)
 

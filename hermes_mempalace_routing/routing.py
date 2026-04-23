@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 
 from .config import RoutingConfig, project_room
@@ -53,22 +54,37 @@ def _parse_created_at(created_at: str) -> datetime | None:
         return None
 
 
-def _recency_factor(created_at: str, half_life_days: float, max_boost: float) -> float:
+def _recency_factor(
+    created_at: str,
+    half_life_days: float,
+    max_boost: float,
+    now_utc: datetime | None = None,
+    lam: float | None = None,
+) -> float:
     dt = _parse_created_at(created_at)
     if dt is None:
         return 0.0
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    age = datetime.now(UTC) - dt
+
+    now = now_utc if now_utc is not None else datetime.now(UTC)
+    age = now - dt
     if age.total_seconds() < 0:
         return max_boost
+
+    if lam is not None:
+        # Optimization: use precomputed decay constant.
+        # A sentinel of -1.0 means hl was <= 0, so no boost.
+        if lam < 0:
+            return 0.0
+        return max_boost * math.exp(-lam * age.total_seconds())
+
     hl = timedelta(days=half_life_days).total_seconds()
     if hl <= 0:
         return 0.0
-    import math
 
-    lam = math.log(2) / hl
-    return max_boost * math.exp(-lam * age.total_seconds())
+    lam_calc = math.log(2) / hl
+    return max_boost * math.exp(-lam_calc * age.total_seconds())
 
 
 class RouteScorer:
@@ -83,6 +99,9 @@ class RouteScorer:
         mode: str = "debugging",
         *,
         conflicts: list[ConflictRecord] | None = None,
+        query_tokens: list[str] | None = None,
+        now_utc: datetime | None = None,
+        decay_lam: float | None = None,
     ) -> RouteCandidate:
         conflicts = conflicts or []
         bd: dict[str, float] = {}
@@ -108,7 +127,8 @@ class RouteScorer:
 
         summary = env.summary.lower()
         route_tags = [tag.lower() for tag in env.route_tags]
-        q_tokens = [t for t in query.lower().split() if t]
+        # Optimization: Use precomputed query tokens if available
+        q_tokens = query_tokens if query_tokens is not None else [t for t in query.lower().split() if t]
 
         weights = self._config.room_weights_for_mode(mode)
 
@@ -153,10 +173,13 @@ class RouteScorer:
             bd["verification"] = self._config.verification_boost
             rationale.append("verified")
 
+        # Optimization: Pass precomputed time/decay to recency factor
         bd["recency"] = _recency_factor(
             env.created_at,
             self._config.recency_half_life_days,
             self._config.recency_boost_max,
+            now_utc=now_utc,
+            lam=decay_lam,
         )
         if bd["recency"] > 0.001:
             rationale.append("recency")
