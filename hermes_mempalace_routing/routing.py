@@ -104,6 +104,8 @@ class RouteScorer:
         precomputed_query_tokens: list[str] | None = None,
         now: datetime | None = None,
         recency_lam: float | None = None,
+        precomputed_conflict_losers: set[str] | None = None,
+        precomputed_unresolved_conflicts: set[str] | None = None,
     ) -> RouteCandidate:
         conflicts = conflicts or []
         bd: dict[str, float] = {}
@@ -118,7 +120,13 @@ class RouteScorer:
                 score_breakdown={},
             )
 
-        if self._memory_is_conflict_loser(env, conflicts):
+        is_loser = False
+        if precomputed_conflict_losers is not None:
+            is_loser = env.memory_id in precomputed_conflict_losers
+        else:
+            is_loser = self._memory_is_conflict_loser(env, conflicts)
+
+        if is_loser:
             return RouteCandidate(
                 room=env.room,
                 memory_id=env.memory_id,
@@ -185,7 +193,14 @@ class RouteScorer:
             rationale.append("recency")
 
         raw = sum(bd.values())
-        if self._memory_in_unresolved_conflict(env, conflicts) and not env.pinned:
+
+        in_unresolved = False
+        if precomputed_unresolved_conflicts is not None:
+            in_unresolved = env.memory_id in precomputed_unresolved_conflicts
+        else:
+            in_unresolved = self._memory_in_unresolved_conflict(env, conflicts)
+
+        if in_unresolved and not env.pinned:
             pen = self._config.unresolved_conflict_penalty
             bd["unresolved_conflict_penalty"] = -pen
             raw -= pen
