@@ -1,0 +1,3 @@
+## 2026-04-23 - [Optimization of RouteScorer.score]
+**Learning:** In batch processing scenarios like context assembly, redundant calls to `datetime.now(UTC)` and repeated query tokenization in tight loops can account for a significant portion of CPU time (~30% in this case). Providing a path for precomputed values (timestamps, tokens, decay constants) drastically improves performance without sacrificing the flexibility of the API for single calls.
+**Action:** Always look for "loop-invariant" computations that can be hoisted out of batch processing loops and passed down as optional optimized parameters.
