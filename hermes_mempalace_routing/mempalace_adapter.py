@@ -5,6 +5,7 @@ import inspect
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 
@@ -40,6 +41,22 @@ def _normalize_status(payload: object) -> dict[str, Any]:
         "detail": payload.get("detail") or payload.get("message"),
         "raw": payload,
     }
+
+
+# Keys excluded from MemPalaceDrawerHit.metadata (stable membership test per row).
+_SEARCH_HIT_SKIP = frozenset(
+    {
+        "drawer_id",
+        "id",
+        "drawerId",
+        "wing",
+        "room",
+        "content",
+        "verbatim",
+        "text",
+        "body",
+    }
+)
 
 
 def _flatten_drawer_item(it: dict[str, Any]) -> dict[str, Any]:
@@ -85,21 +102,16 @@ def _normalize_search(payload: object) -> list[MemPalaceDrawerHit]:
         if not content:
             continue
         if not did:
-            key_src = f"{wing}|{room}|{content[:512]}"
+            # Disambiguate id-less rows with location + text + a bounded view of other fields
+            # (avoids full-json cost per hit while keeping distinct provenance from collapsing).
+            _parts: list[str] = [wing, room, content[:1024]]
+            for k in sorted(k for k in it if k not in _SEARCH_HIT_SKIP):
+                v = it.get(k)
+                _parts.append(f"{k}={v!r}"[:500])
+            key_src = "\x1f".join(_parts)
             hkey = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:24]
             did = f"mp_hit_{hkey}"
-        skip = {
-            "drawer_id",
-            "id",
-            "drawerId",
-            "wing",
-            "room",
-            "content",
-            "verbatim",
-            "text",
-            "body",
-        }
-        meta = {k: v for k, v in it.items() if k not in skip}
+        meta = {k: v for k, v in it.items() if k not in _SEARCH_HIT_SKIP}
         out.append(MemPalaceDrawerHit(drawer_id=did, wing=wing, room=room, content=content, metadata=meta))
     return out
 
@@ -142,6 +154,7 @@ def _normalize_add_drawer(payload: object) -> str:
     raise MemPalaceAdapterError("add_drawer response missing drawer id")
 
 
+@lru_cache(maxsize=256)
 def _uses_hermes_mcp_args_style(fn: Callable[..., Any]) -> bool:
     """Hermes ``tools.mcp_tool._make_tool_handler`` uses ``(args: dict, **kwargs) -> str``."""
     try:
@@ -194,6 +207,26 @@ def _build_mcp_tool_arguments(name: str, args: tuple[Any, ...], kwargs: dict[str
     raise ValueError(f"no MCP argument mapping for tool {name!r}")
 
 
+def _unwrap_parsed_mcp_dict(parsed: dict[str, Any]) -> Any:
+    """Unwrap Hermes/MCP shape: ``structuredContent``, nested JSON ``result``, passthrough errors."""
+    if "structuredContent" in parsed and isinstance(parsed["structuredContent"], dict):
+        return parsed["structuredContent"]
+    if "result" in parsed:
+        inner = parsed["result"]
+        if isinstance(inner, str):
+            s2 = inner.strip()
+            if s2.startswith("{") or s2.startswith("["):
+                try:
+                    return json.loads(s2)
+                except json.JSONDecodeError:
+                    return inner
+            return inner
+        return inner
+    if parsed.get("error") is not None:
+        return parsed
+    return parsed
+
+
 def _unwrap_hermes_mcp_json_result(raw: Any) -> Any:
     """Parse JSON strings from Hermes MCP wrappers; unwrap ``result`` / ``structuredContent``."""
     if raw is None:
@@ -204,32 +237,19 @@ def _unwrap_hermes_mcp_json_result(raw: Any) -> Any:
         parsed: Any = json.loads(raw)
     except json.JSONDecodeError:
         return raw
-    if not isinstance(parsed, dict):
-        return parsed
-    if "structuredContent" in parsed and isinstance(parsed["structuredContent"], dict):
-        return parsed["structuredContent"]
-    if "result" in parsed:
-        inner = parsed["result"]
-        if isinstance(inner, str):
-            try:
-                return json.loads(inner)
-            except json.JSONDecodeError:
-                return inner
-        return inner
+    if isinstance(parsed, dict):
+        return _unwrap_parsed_mcp_dict(parsed)
     return parsed
 
 
 def _coerce_tool_return(raw: Any) -> Any:
-    """Hermes MCP handlers return JSON strings; tests often return dicts."""
+    """Normalize dict returns, JSON strings, and Hermes MCP JSON wrappers in one pass."""
     if isinstance(raw, dict):
-        return raw
+        return _unwrap_parsed_mcp_dict(raw)
     if isinstance(raw, str):
         s = raw.strip()
         if s.startswith("{") or s.startswith("["):
-            try:
-                return _unwrap_hermes_mcp_json_result(raw)
-            except json.JSONDecodeError:
-                return raw
+            return _unwrap_hermes_mcp_json_result(s)
     return raw
 
 
