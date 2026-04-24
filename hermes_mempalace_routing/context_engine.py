@@ -41,13 +41,29 @@ class RoutingContextEngine:
         )
         return int(n * self._config.tokenizer_fallback_safety_multiplier)
 
-    def _precompute_scoring_params(self, query: str) -> tuple[list[str], datetime, float]:
+    def _precompute_scoring_params(
+        self, query: str, conflicts: list[ConflictRecord] | None = None
+    ) -> tuple[list[str], datetime, float, set[str], set[str]]:
         q_tokens = [t for t in query.lower().split() if t]
         now = datetime.now(UTC)
         hl = timedelta(days=self._config.recency_half_life_days).total_seconds()
         # Use -1.0 as a sentinel for hl <= 0 to avoid boost (original logic)
         lam = math.log(2) / hl if hl > 0 else -1.0
-        return q_tokens, now, lam
+
+        losers: set[str] = set()
+        unresolved: set[str] = set()
+        if conflicts:
+            from .models import ConflictStatus
+
+            for c in conflicts:
+                if c.status == ConflictStatus.UNRESOLVED.value:
+                    for cid in c.candidate_memory_ids:
+                        unresolved.add(cid)
+                else:
+                    for cid in (c.loser_memory_ids or []):
+                        losers.add(cid)
+
+        return q_tokens, now, lam, losers, unresolved
 
     def allocate_budget(self, total_tokens: int) -> ContextBudget:
         live = int(total_tokens * 0.20)
@@ -74,7 +90,7 @@ class RoutingContextEngine:
         conflicts: list[ConflictRecord],
     ) -> tuple[list[RouteCandidate], dict[str, str]]:
         """Rank all envelopes and record exclusion reasons for ineligible candidates."""
-        q_tokens, now, lam = self._precompute_scoring_params(query)
+        q_tokens, now, lam, losers, unresolved = self._precompute_scoring_params(query, conflicts)
 
         scored: list[RouteCandidate] = [
             self.scorer.score(
@@ -86,6 +102,8 @@ class RoutingContextEngine:
                 precomputed_query_tokens=q_tokens,
                 now=now,
                 recency_lam=lam,
+                conflict_losers=losers,
+                unresolved_candidates=unresolved,
             )
             for env in envelopes
         ]
@@ -166,7 +184,7 @@ class RoutingContextEngine:
         already_cited_artifact_ids = already_cited_artifact_ids or frozenset()
         diagnostic_envs = [e for e in envelopes if e.fact_type in _DIAGNOSTIC_FACTS and e.provenance_artifact_ids]
 
-        q_tokens, now, lam = self._precompute_scoring_params(query)
+        q_tokens, now, lam, losers, unresolved = self._precompute_scoring_params(query, conflicts)
 
         scored = [
             self.scorer.score(
@@ -178,6 +196,8 @@ class RoutingContextEngine:
                 precomputed_query_tokens=q_tokens,
                 now=now,
                 recency_lam=lam,
+                conflict_losers=losers,
+                unresolved_candidates=unresolved,
             )
             for env in diagnostic_envs
         ]

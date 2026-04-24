@@ -104,7 +104,16 @@ class RouteScorer:
         precomputed_query_tokens: list[str] | None = None,
         now: datetime | None = None,
         recency_lam: float | None = None,
+        conflict_losers: set[str] | None = None,
+        unresolved_candidates: set[str] | None = None,
     ) -> RouteCandidate:
+        """
+        Score a memory envelope against a query.
+
+        Args:
+            conflict_losers: Optional precomputed set of memory IDs that are conflict losers.
+            unresolved_candidates: Optional precomputed set of memory IDs that are in unresolved conflicts.
+        """
         conflicts = conflicts or []
         bd: dict[str, float] = {}
         rationale: list[str] = []
@@ -118,7 +127,9 @@ class RouteScorer:
                 score_breakdown={},
             )
 
-        if self._memory_is_conflict_loser(env, conflicts):
+        # Use precomputed sets for O(1) lookups if available, otherwise fall back to O(N) list search
+        is_loser = (env.memory_id in conflict_losers) if conflict_losers is not None else self._memory_is_conflict_loser(env, conflicts)
+        if is_loser:
             return RouteCandidate(
                 room=env.room,
                 memory_id=env.memory_id,
@@ -185,7 +196,8 @@ class RouteScorer:
             rationale.append("recency")
 
         raw = sum(bd.values())
-        if self._memory_in_unresolved_conflict(env, conflicts) and not env.pinned:
+        in_unresolved = (env.memory_id in unresolved_candidates) if unresolved_candidates is not None else self._memory_in_unresolved_conflict(env, conflicts)
+        if in_unresolved and not env.pinned:
             pen = self._config.unresolved_conflict_penalty
             bd["unresolved_conflict_penalty"] = -pen
             raw -= pen
