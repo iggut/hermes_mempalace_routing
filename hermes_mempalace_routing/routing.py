@@ -104,6 +104,8 @@ class RouteScorer:
         precomputed_query_tokens: list[str] | None = None,
         now: datetime | None = None,
         recency_lam: float | None = None,
+        conflict_loser_ids: set[str] | None = None,
+        unresolved_conflict_ids: set[str] | None = None,
     ) -> RouteCandidate:
         conflicts = conflicts or []
         bd: dict[str, float] = {}
@@ -118,7 +120,7 @@ class RouteScorer:
                 score_breakdown={},
             )
 
-        if self._memory_is_conflict_loser(env, conflicts):
+        if self._memory_is_conflict_loser(env, conflicts, conflict_loser_ids):
             return RouteCandidate(
                 room=env.room,
                 memory_id=env.memory_id,
@@ -185,7 +187,7 @@ class RouteScorer:
             rationale.append("recency")
 
         raw = sum(bd.values())
-        if self._memory_in_unresolved_conflict(env, conflicts) and not env.pinned:
+        if self._memory_in_unresolved_conflict(env, conflicts, unresolved_conflict_ids) and not env.pinned:
             pen = self._config.unresolved_conflict_penalty
             bd["unresolved_conflict_penalty"] = -pen
             raw -= pen
@@ -202,7 +204,11 @@ class RouteScorer:
         )
 
     @staticmethod
-    def _memory_in_unresolved_conflict(env: MemoryEnvelope, conflicts: list[ConflictRecord]) -> bool:
+    def _memory_in_unresolved_conflict(
+        env: MemoryEnvelope, conflicts: list[ConflictRecord], unresolved_ids: set[str] | None = None
+    ) -> bool:
+        if unresolved_ids is not None:
+            return env.memory_id in unresolved_ids
         for c in conflicts:
             if c.status != ConflictStatus.UNRESOLVED.value:
                 continue
@@ -211,7 +217,11 @@ class RouteScorer:
         return False
 
     @staticmethod
-    def _memory_is_conflict_loser(env: MemoryEnvelope, conflicts: list[ConflictRecord]) -> bool:
+    def _memory_is_conflict_loser(
+        env: MemoryEnvelope, conflicts: list[ConflictRecord], loser_ids: set[str] | None = None
+    ) -> bool:
+        if loser_ids is not None:
+            return env.memory_id in loser_ids
         for c in conflicts:
             if c.status == ConflictStatus.UNRESOLVED.value:
                 continue
